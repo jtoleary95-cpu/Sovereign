@@ -56,9 +56,10 @@ label{display:block;margin:10px 0 2px;font-weight:600}label select,label input[t
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}.chipbtn{border:1.5px solid var(--ink);background:transparent;border-radius:16px;padding:5px 11px;font-size:.9rem;font-weight:600}.chipbtn.on{background:var(--ink);color:var(--bg)}.chipbtn:disabled{opacity:.35}
 .notice{border-left:4px solid var(--act);background:var(--panel);padding:8px 10px;margin:8px 0;font-size:.95rem;display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
 .goal{font-weight:600;margin:4px 0}.alloc{font:600 .9rem "Source Sans 3",sans-serif;color:var(--soft);margin-left:8px}.alloc b{color:var(--ink)}.alloc.hot b{color:var(--hot)}
+.quit{position:absolute;right:44px;top:8px;border:1.5px solid var(--line);background:transparent;border-radius:6px;padding:4px 10px;font-weight:600;font-size:.85rem;min-height:34px}
 .mute{position:absolute;right:0;top:4px;border:0;background:transparent;font-size:1.2rem;min-width:40px;min-height:40px}.gbar{position:sticky}
 .sheet{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;z-index:30}
-.sheet .inner{background:var(--bg);width:100%;max-width:520px;max-height:85%;overflow:auto;border-radius:12px 12px 0 0;padding:16px 16px calc(20px + env(safe-area-inset-bottom,0px))}
+.sheet .btn.wide{margin-top:8px}.sheet .inner{background:var(--bg);width:100%;max-width:520px;max-height:85%;overflow:auto;border-radius:12px 12px 0 0;padding:16px 16px calc(20px + env(safe-area-inset-bottom,0px))}
 .opt{display:flex;gap:10px;align-items:center;justify-content:space-between;background:var(--panel);border-radius:8px;padding:8px 10px;margin:6px 0}.opt p{margin:2px 0 0}
 .facs{display:grid;grid-template-columns:1fr 1fr;gap:8px}.fac{background:var(--panel);border-radius:6px;padding:6px 8px;display:flex;flex-direction:column;gap:2px;font-size:.9rem}
 .bar{display:block;height:6px;background:var(--line);border-radius:3px;overflow:hidden}.bar>span{display:block;height:100%;background:var(--act)}.bar.lo>span{background:var(--war)}
@@ -277,7 +278,7 @@ function termText(o){const p=o.pct||20;return({none:"no terms",getTribute:`they 
 function termsFor(o,viewer){if(viewer!==o.to)return termText(o);const p=o.pct||20,r=REG[o.region]?.n||"a region";return({none:"no terms",getTribute:`you pay ${p}% of your treasury`,payTribute:`they pay you ${p}% of their treasury`,getRegion:`you cede ${r}`,giveRegion:`they cede ${r} to you`}[o.terms||"none"])}
 function payPct(S,from,to,pct){const amt=Math.floor(S.nations[from].cash*pct/100);S.nations[from].cash-=amt;S.nations[to].cash+=amt;return amt}
 function cede(S,r,from,to){if(S.regions[r]?.owner===from&&S.nations[from].capital!==r){S.regions[r].owner=to;S.regions[r].def=0;log(S,"all",`${NAT[from].name} ceded ${REG[r].n} to ${NAT[to].name}.`);return true}return false}
-function applyOffer(S,o,accept,resp){if(o.kind==="event"){applyEvent(S,o,resp?.idx??99);return}if(o.kind==="nukeDone"){if(resp?.choice==="announce")announceBomb(S,o.to);else log(S,o.to,"You kept your bomb secret.");return}
+function applyOffer(S,o,accept,resp){if(o.kind==="event"){applyEvent(S,o,resp?.idx??99);return}if(o.kind==="nukeDone"){if(resp?.choice==="announce")announceBomb(S,o.to);else if(!S.nations[o.to].nuke?.public)log(S,o.to,"You kept your bomb secret. You can still announce it from the Policy tab.");return}
   const a=o.from,b=o.to,R=rel(S,a,b);if(!R||!S.nations[a].alive||!S.nations[b].alive)return;
   const na=NAT[a].name,nb=NAT[b].name,choice=resp?.choice;
   if(o.kind==="ally"){if(accept&&canAlly(R)&&!allyOf(S,a)&&!allyOf(S,b)){setLevel(S,a,b,2);log(S,"all",`${na} and ${nb} formed an alliance.`)}else log(S,a,`${nb} declined your alliance${o.why?": "+o.why:""}.`)}
@@ -379,7 +380,7 @@ function resolve(S0,humanOrders){const S=JSON.parse(JSON.stringify(S0));S.log=S.
       if(o.t==="recruit"){const dest=S.regions[o.region]?.owner===id?o.region:(n.defFocus&&S.regions[n.defFocus]?.owner===id?n.defFocus:n.capital);if(dest&&S.regions[dest]?.owner===id){const k=Math.min(o.n|0,Math.floor(n.cash/COST.troop));let made=0;const cg=S.regions[dest];
         for(let i=0;i<k;i++){const src=cg.pop>5?dest:owned(S,id).sort((a,b)=>S.regions[b].pop-S.regions[a].pop)[0];if(!src||S.regions[src].pop<=5)break;S.regions[src].pop--;cg.troops++;made++}n.cash-=made*COST.troop;if(made)log(S,id,`Recruited ${made} troops in ${REG[dest].n} from the treasury.`)}}}
     if(!n.capital){const rs=owned(S,id).sort((a,b)=>S.regions[b].pop-S.regions[a].pop);if(rs[0]){n.capital=rs[0];n.unrest=clamp(n.unrest+15,0,100);log(S,"all",`${NAT[id].name} moved its capital to ${REG[rs[0]].n}.`)}}}
-  for(const id of ids)for(const o of orders[id]){if(o.t==="pol")runPolAction(S,id,o);if(o.t==="nukeToggle"&&nukes(S)){const N=nk(S.nations[id]);if(!N.done){N.on=!!o.on;log(S,id,N.on?"Nuclear program funded.":"Nuclear program paused.")}}}
+  for(const id of ids)for(const o of orders[id]){if(o.t==="pol")runPolAction(S,id,o);if(o.t==="nukeAnnounce"&&nukes(S)&&S.nations[id].nuke?.done)announceBomb(S,id);if(o.t==="nukeToggle"&&nukes(S)){const N=nk(S.nations[id]);if(!N.done){N.on=!!o.on;log(S,id,N.on?"Nuclear program funded.":"Nuclear program paused.")}}}
   // responses to standing offers (made last turn to humans)
   const answered=new Set();
   for(const id of ids)for(const o of orders[id])if(o.t==="resp"){const off=S.offers.find(x=>x.id===o.id&&x.to===id);if(off){answered.add(off.id);const ch=o.choice||(o.accept?"accept":"decline");applyOffer(S,off,["accept","join","war"].includes(ch),{...o,choice:ch})}}
@@ -647,7 +648,7 @@ function soundsFor(before,S2){const L=S2.log.filter(l=>l.t===before&&(l.to==="al
   else{if(/captured/.test(L))q.push("capture");if(/declared war|Article 5/.test(L))q.push("war");if(/peace treaty/.test(L))q.push("peace");if(/formed an alliance/.test(L))q.push("alliance");if(/spy/.test(L))q.push("spy");
     if(S2.offers.some(o=>o.to===myNat))q.push("alert");if(isPolicyTurn(S2))q.push("policy");if(!q.length)q.push("turn")}
   q.slice(0,3).forEach((k,i)=>setTimeout(()=>play(k),i*700))}
-let results=null;
+let results=null,quitAsk=false;
 /* ---------- map ---------- */
 const CX=[45,118,193,268,338],CY=r=>36+r*64;
 const cen=k=>[CX[REG[k].c],CY(REG[k].r)];
@@ -682,6 +683,7 @@ const orderText=o=>{switch(o.t){
   case"airlift":return `Air-drop ${o.n} from ${REG[o.from].n} to ${REG[o.to].n} (whole turn)`;
   case"pol":return POLN[o.kind]+(o.region?`: ${REG[o.region].n}`:"")+(o.faction?`: ${FACN[o.faction]}`:"")+(POL_COST[o.kind]?` (${POL_COST[o.kind]})`:"");
   case"nukeToggle":return o.on?"Fund the nuclear program":"Pause the nuclear program";
+  case"nukeAnnounce":return "☢ Announce the bomb with a test";
   case"nukeStrike":return `☢ Nuclear strike on ${REG[o.region].n}`}};
 const actionCount=()=>myOrders.filter(o=>ACTIONS.includes(o.t)).reduce((t,o)=>t+actW(o),0);
 const spiesAt=t=>myOrders.filter(o=>o.t==="spy"&&o.target===t).length;
@@ -731,18 +733,19 @@ function natCard(n,taken){const N=NAT[n],on=setup.nat===n;return `<button class=
 function optToggle(k,label,desc){const on=!!setup.opts?.[k];return `<div class="opt"><div><b>${label}</b><p class="note">${desc}</p></div><button class="btn small ${on?"on":""}" data-act="opt" data-id="${k}" aria-pressed="${on}">${on?"On":"Off"}</button></div>`}
 function setupHTML(){const taken=lobby?Object.values(lobby.players||{}).filter(x=>x&&x!==setup.nat):[];
   return `<header class="bar"><button class="btn small" data-act="home">Back</button><h2>${mode==="solo"?"Solo game":"Host a game"}</h2></header>
-  <h3>Choose your nation</h3><div class="nats">${Object.keys(NAT).map(n=>natCard(n,taken.includes(n))).join("")}</div>
+  ${mode==="solo"?`<h3>Choose your nation</h3><div class="nats">${Object.keys(NAT).map(n=>natCard(n,taken.includes(n))).join("")}</div>`:`<p class="note">You'll both choose nations in the lobby after your friend joins.</p>`}
   <h3>Robot difficulty</h3><div class="seg">${["easy","normal","hard"].map(d=>`<button class="${setup.diff===d?"on":""}" data-act="diff" data-id="${d}">${d[0].toUpperCase()+d.slice(1)}</button>`).join("")}</div>
   <h3>Game options</h3>${optToggle("politics","Advanced politics","Factions, demands, events, regional elections with campaigns, and loyalty for monarchies and dictatorships.")}${optToggle("nukes","Nuclear weapons","Secret nuclear programs, a bomb stockpile, and strikes that turn regions into wasteland.")}
-  <button class="btn primary wide" data-act="${mode==="solo"?"startSolo":"createLobby"}" ${setup.nat?"":"disabled"}>${mode==="solo"?"Start":"Create game"}</button>`}
-function lobbyHTML(){const L=lobby||{},hosting=L.host===me,players=L.players||{},mine=players[me],others=Object.entries(players).filter(([u])=>u!==me);
-  const guestNat=others[0]?.[1];
+  <button class="btn primary wide" data-act="${mode==="solo"?"startSolo":"createLobby"}" ${setup.nat||mode!=="solo"?"":"disabled"}>${mode==="solo"?"Start":"Create game"}</button>`}
+function lobbyHTML(){const L=lobby||{},hosting=L.host===me,players=L.players||{},mine=players[me],others=Object.entries(players).filter(([u])=>u!==me),otherNat=others[0]?.[1];
+  const ready=others.length&&otherNat&&mine&&otherNat!==mine;
   return `<header class="bar"><button class="btn small" data-act="leaveLobby">Leave</button><h2>Game ${esc(code)}</h2></header>
-  <div class="codebox">Share this code<br><b>${esc(code)}</b><div class="row"><button class="btn small" data-act="invite">Send invite link</button></div></div>
-  ${hosting?`<p>You: <b>${mine?NAT[mine].name:"–"}</b>. Robots: ${esc(L.diff)}. Advanced politics ${L.opts?.politics?"on":"off"}, nuclear weapons ${L.opts?.nukes?"on":"off"}.</p><p>${others.length?`Friend: <b>${guestNat?NAT[guestNat].name:"choosing a nation…"}</b>`:"Waiting for your friend to join…"}</p>
-    <button class="btn primary wide" data-act="startMp" ${others.length&&guestNat?"":"disabled"}>Start game</button>`
-  :`<h3>Choose your nation</h3><div class="nats">${Object.keys(NAT).map(n=>{const tk=Object.entries(players).some(([u,x])=>u!==me&&x===n);return natCard(n,tk)}).join("")}</div>
-    <button class="btn primary wide" data-act="guestNat" ${setup.nat?"":"disabled"}>${mine?"Change nation":"Confirm nation"}</button><p class="note">${mine?`You're ${NAT[mine].name}. Waiting for the host to start.`:""}</p>`}`}
+  ${hosting?`<div class="codebox">Share this code<br><b>${esc(code)}</b><div class="row"><button class="btn small" data-act="invite">Send invite link</button></div></div>`:""}
+  <p class="note">Robots: ${esc(L.diff)}. Advanced politics ${L.opts?.politics?"on":"off"}, nuclear weapons ${L.opts?.nukes?"on":"off"}.</p>
+  <p>${others.length?`${hosting?"Your friend":"The host"}: <b>${otherNat?NAT[otherNat].name:"choosing a nation…"}</b>`:"Waiting for your friend to join…"}</p>
+  <h3>Choose your nation</h3><div class="nats">${Object.keys(NAT).map(n=>{const tk=Object.entries(players).some(([u,x])=>u!==me&&x===n);return natCard(n,tk)}).join("")}</div>
+  <button class="btn ${mine===setup.nat&&mine?"":"primary"} wide" data-act="guestNat" ${setup.nat&&setup.nat!==mine?"":"disabled"}>${mine?(mine===setup.nat?`You're ${NAT[mine].name}`:"Change nation"):"Confirm nation"}</button>
+  ${hosting?`<button class="btn primary wide" data-act="startMp" ${ready?"":"disabled"}>Start game</button><p class="note">${ready?"":"Start unlocks once you've both confirmed different nations."}</p>`:`<p class="note">${mine?"Waiting for the host to start.":""}</p>`}`}
 function pickState(){return mode==="solo"?setup.pick:lobby.pick}
 const claimOf=(P,n)=>Object.keys(P.claims||{}).find(r=>P.claims[r]===n)||null;
 const pickDone=(P,n)=>!!claimOf(P,n)||!pickChoices(Object.keys(P.claims||{}),n).length;
@@ -755,7 +758,7 @@ function pickHTML(){const P=pickState(),taken=Object.keys(P.claims||{}),mine=cla
 function gameHTML(){if(!S)return `<p class="muted">Loading…</p>`;const n=S.nations[myNat];
   const pol=isPolicyTurn(S),inc=Math.round(income(S,myNat)),left=Math.floor(n.cash-spendQueued());
   let h=`<header class="gbar" style="--nc:${NAT[myNat].color}"><div class="who"><span class="chip"></span><b>${NAT[myNat].name}</b><span class="muted">${GOVN[n.gov]}</span></div>
-    <button class="mute" data-act="mute" aria-label="${muted?"Unmute":"Mute"} sounds">${muted?"🔇":"🔊"}</button>
+    <button class="quit" data-act="quitAsk" aria-label="Quit game">Quit</button><button class="mute" data-act="mute" aria-label="${muted?"Unmute":"Mute"} sounds">${muted?"🔇":"🔊"}</button>
     <div class="stats"><span>Turn <b>${S.turn}</b>${pol?` <em class="tag">Policy</em>`:""}</span><span>Treasury <b>${left}</b></span><span>Income <b>+${inc}</b></span><span class="${n.unrest>70?"hot":""}">Unrest <b>${Math.round(n.unrest)}</b></span></div></header>`;
   if(S.over)h+=overHTML();
   else if(!n.alive)h+=`<div class="warn">Your nation has fallen. The war goes on without you.</div>`;
@@ -769,6 +772,10 @@ function gameHTML(){if(!S)return `<p class="muted">Loading…</p>`;const n=S.nat
   if(pol&&n.alive&&!S.over&&n.forced<=0&&!myOrders.some(o=>o.t==="policy"))h+=`<div class="notice"><b>Policy year.</b> Set taxes and your budget for the next 5 turns.${tab!=="pol"?` <button class="btn small" data-act="tab" data-id="pol">Open policy</button>`:""}</div>`;
   h+=tab==="map"?mapTab():tab==="dip"?dipTab():tab==="spy"?spyTab():tab==="pol"?polTab():tab==="polit"&&S.opts?.politics?politicsTab():logTab();
   if(!S.over&&n.alive)h+=ordersHTML();
+  if(quitAsk)h+=`<div class="sheet" role="dialog" aria-label="Quit game"><div class="inner"><h2>Leave the game?</h2>
+    ${mode==="solo"?`<p>Your game is saved. You can resume it from the menu.</p><button class="btn primary wide" data-act="quitSave">Save and exit to menu</button><button class="btn wide danger" data-act="quitDelete">Quit and delete this game</button>`
+    :`<p>You can rejoin from the menu with the same code.${lobby?.host===me?" You're the host: turns can't resolve while you're away.":""}</p><button class="btn primary wide" data-act="quitSave">Exit to menu</button>`}
+    <button class="btn wide" data-act="quitCancel">Keep playing</button></div></div>`;
   if(results)h+=resultsHTML();if(confirmAtk)h+=confirmHTML();if(confirmNuke)h+=nukeConfirmHTML();
   return h}
 function resultsHTML(){const L=S.log.filter(l=>l.t===results&&(l.to==="all"||l.to===myNat));
@@ -911,14 +918,15 @@ function facPreview(tax,b){const n=S.nations[myNat];if(!S.opts?.politics||!n.fac
   return FAC.map(f=>{const d=nw[f]-now[f];return `<span>${FACN[f]} <b class="${d<0?"neg":d>0?"pos":""}">${d>0?"+":""}${d}</b></span>`}).join("")}
 function nukeCard(){const n=S.nations[myNat],N=n.nuke;if(!S.opts?.nukes||!N)return "";const q=myOrders.find(o=>o.t==="nukeToggle"),on=q?q.on:N.on;
   let h=`<h3>☢ Nuclear program</h3>`;
-  if(N.done)h+=`<p>You have <b>${N.bombs}</b> bomb${N.bombs===1?"":"s"}${N.bombs<NUKE_MAX?`. Next one in ${Math.max(0,NUKE_EVERY-(S.turn-N.lastBuild))} turns (max ${NUKE_MAX})`:""}. ${N.public?"The world knows.":"Your arsenal is secret."}</p><p class="note">Tap any region on the map to launch a strike.</p>`;
+  if(N.done){const qa=myOrders.some(o=>o.t==="nukeAnnounce");h+=`<p>You have <b>${N.bombs}</b> bomb${N.bombs===1?"":"s"}${N.bombs<NUKE_MAX?`. Next one in ${Math.max(0,NUKE_EVERY-(S.turn-N.lastBuild))} turns (max ${NUKE_MAX})`:""}. ${N.public?"The world knows.":"Your arsenal is secret."}</p><p class="note">Tap any region on the map to launch a strike.</p>
+    ${N.public?"":`<div class="row"><button class="btn small ${qa?"on":""}" data-act="nukeAnnounce">${qa?"Test scheduled for this turn":"Announce with a test"}</button><span class="note">Gains sway. Every nation drops 1 level with you.</span></div>`}`}
   else h+=`<p>${N.progress} of ${NUKE_TURNS} funded turns done. <b>${NUKE_TURNS-N.progress} to go.</b> ${N.public?"The program has been exposed.":"The program is secret."}</p>
     <p class="note">While funded it takes exactly ${NUKE_FUND}% of your income each turn, off the top. Unfunded turns pause progress. Each funded turn has a small chance of a leak.</p>
     <div class="row"><button class="btn small ${on?"on":""}" data-act="nukeToggle" data-v="${on?0:1}">${on?"Funded: tap to pause":"Paused: tap to fund"}</button></div>`;
   return h}
 function logTab(){const L=S.log.filter(l=>l.to==="all"||l.to===myNat).slice(-80).reverse();let h=`<h3>Reports</h3>`,t=null;
   for(const l of L){if(l.t!==t){t=l.t;h+=`<h4>Turn ${t}</h4>`}h+=`<p class="logl ${l.to===myNat?"mine":""}">${esc(l.text)}</p>`}return h}
-function ordersHTML(){const w=mode==="mp"&&submitted;const tl=mode==="mp"&&lobby?.deadline?Math.max(0,Math.ceil((lobby.deadline-Date.now())/1000)):null;
+function ordersHTML(){const w=mode==="mp"&&submitted,tl=null;
   return `<section class="orders"><h3>Orders this turn</h3>${myOrders.length?myOrders.map((o,i)=>`<div class="ord"><span>${esc(orderText(o))}</span>${w?"":`<button class="x" data-act="rmOrder" data-i="${i}" aria-label="Remove order">✕</button>`}</div>`).join(""):`<p class="note">No orders yet. Troops left in place defend.</p>`}</section>
   <div class="endbar">${tl!==null?`<span class="timer ${tl<=15?"hot":""}" id="timer">${tl}s</span>`:""}<button class="btn primary ${armEnd?"armed":""}" data-act="endTurn" ${w?"disabled":""}>${w?"Waiting for the other player…":armEnd?"Tap again to end turn":"End turn"}</button></div>`}
 let armEnd=false,armT=null;
@@ -937,7 +945,7 @@ function endTurnSolo(){const before=S.turn;S=resolve(S,{[myNat]:myOrders});sound
 const gref=()=>db.doc("wgames/"+code);
 function genCode(){const A="ABCDEFGHJKLMNPQRSTUVWXYZ";return Array.from({length:4},()=>A[rnd(A.length)]).join("")}
 async function createLobby(){if(busy)return;busy=true;code=genCode();
-  try{await db.doc("wgames/"+code).set({host:me,players:{[me]:setup.nat},diff:setup.diff,opts:setup.opts||{},phase:"lobby",created:Date.now()});lsSet("sov-code",code);listen();screen="lobby"}
+  setup.nat=null;try{await db.doc("wgames/"+code).set({host:me,players:{[me]:null},diff:setup.diff,opts:setup.opts||{},phase:"lobby",created:Date.now()});lsSet("sov-code",code);listen();screen="lobby"}
   catch(e){toast("Couldn't create the game. Check the Firestore rules.")}busy=false;render()}
 async function joinLobby(c){c=(c||"").trim().toUpperCase();if(c.length!==4){toast("Codes are 4 letters");return}if(busy)return;busy=true;
   try{const s=await db.doc("wgames/"+c).get();if(!s.exists){toast("No game with that code");busy=false;return}const L=s.data();
@@ -951,7 +959,7 @@ function onLobby(L){lobby=L;myNat=L.players?.[me]||null;
   else if(L.phase==="play"||L.phase==="over"){const st=typeof L.state==="string"?JSON.parse(L.state):null;if(st){if(lastTurnSeen!==st.turn){if(lastTurnSeen!==null&&S){results=S.turn;soundsFor(S.turn,st)}lastTurnSeen=st.turn;myOrders=[];submitted=!!L.done?.[me];target=null;confirmAtk=null}S=st;if(!sel)sel=NAT[myNat].home}
     submitted=!!L.done?.[me];screen="game"}
   render()}
-async function startMp(){const L=lobby,humans=Object.values(L.players).filter(Boolean),others=shuffle(Object.keys(NAT).filter(n=>!humans.includes(n))).slice(0,5-humans.length),order=[...humans,...others];
+async function startMp(){const L=lobby,humans=Object.values(L.players).filter(Boolean);if(humans.length<2||humans[0]===humans[1]){toast("Both players need different nations");return}const others=shuffle(Object.keys(NAT).filter(n=>!humans.includes(n))).slice(0,5-humans.length),order=[...humans,...others];
   try{await gref().update({phase:"pick",pick:{order,claims:{}},seats:order.map(n=>{const uid=Object.keys(L.players).find(u=>L.players[u]===n)||null;return{nat:n,human:uid,diff:L.diff}})})}catch{toast("Couldn't start. Try again.")}}
 let picking=false;
 async function hostAutoPick(){if(picking||!lobby||lobby.phase!=="pick"||lobby.host!==me)return;const P=lobby.pick;picking=true;
@@ -964,11 +972,11 @@ async function claim(r){if(mode==="solo"){const P=setup.pick;if(P.claims[r]||cla
 async function submitOrders(){if(submitted||busy)return;busy=true;try{await gref().update({["orders."+me]:JSON.stringify(myOrders),["done."+me]:true});submitted=true}catch{toast("Couldn't send orders. Try again.")}busy=false;render()}
 async function hostTick(){if(mode!=="mp"||!lobby||lobby.host!==me||lobby.phase!=="play"||resolving||!S||S.over)return;
   const humans=lobby.seats.filter(s=>s.human).map(s=>s.human),allDone=humans.every(u=>lobby.done?.[u]||!S.nations[lobby.players[u]]?.alive);
-  if(!allDone&&Date.now()<lobby.deadline+4000)return;resolving=true;
+  if(!allDone)return;resolving=true;
   try{const by={};for(const u of humans){try{by[lobby.players[u]]=JSON.parse(lobby.orders?.[u]||"[]")}catch{by[lobby.players[u]]=[]}}
     const S2=resolve(S,by);await gref().update({state:JSON.stringify(S2),orders:{},done:{},deadline:Date.now()+90000,phase:S2.over?"over":"play"})}
   catch(e){toast("Turn failed to resolve. Retrying.")}resolving=false}
-setInterval(()=>{hostTick();hostAutoPick();if(screen==="game"&&mode==="mp"&&!submitted&&lobby?.deadline&&Date.now()>lobby.deadline)submitOrders();const t=$("#timer");if(t&&lobby?.deadline){const s=Math.max(0,Math.ceil((lobby.deadline-Date.now())/1000));t.textContent=s+"s";t.classList.toggle("hot",s<=15)}},1000);
+setInterval(()=>{hostTick();hostAutoPick()},1000);
 
 /* ---------- input ---------- */
 app.addEventListener("input",e=>{const el=e.target;
@@ -1007,11 +1015,16 @@ app.addEventListener("click",e=>{const el=e.target.closest("[data-act]");if(!el|
     case"nukeAsk":if(actionCount()>=ACTION_CAP){toast(`You can give ${ACTION_CAP} troop or spy orders per turn`);break}confirmNuke=sel;render();break;
     case"cancelNuke":confirmNuke=null;render();break;
     case"confirmNuke":{const r=confirmNuke;confirmNuke=null;addOrder({t:"nukeStrike",region:r});break}
+    case"nukeAnnounce":{const ex=myOrders.findIndex(o=>o.t==="nukeAnnounce");if(ex>=0){myOrders.splice(ex,1);saveDraft();render()}else addOrder({t:"nukeAnnounce"});break}
     case"nukeToggle":addOrder({t:"nukeToggle",on:el.dataset.v==="1"});break;
     case"polact":{const k=el.dataset.k,o={t:"pol",kind:k};if(k==="campaign")o.region=$("#campR")?.value;if(k==="rally")o.faction=$("#rallyF")?.value;addOrder(o);break}
     case"confirmAtk":{const o=confirmAtk;confirmAtk=null;target=null;addOrder(o);break}
     case"cancelAtk":confirmAtk=null;render();break;
     case"evresp":addOrder({t:"resp",id:+id,from:myNat,choice:"event",idx:+el.dataset.i});break;
+    case"quitAsk":quitAsk=true;render();break;
+    case"quitCancel":quitAsk=false;render();break;
+    case"quitSave":quitAsk=false;if(unsub){unsub();unsub=null}mode=null;lobby=null;S=null;results=null;screen="home";render();break;
+    case"quitDelete":quitAsk=false;lsSet("sov-solo",null);lsSet("sov-draft",null);mode=null;S=null;results=null;screen="home";render();break;
     case"closeResults":results=null;render();try{window.scrollTo(0,0)}catch{}break;
     case"mute":muted=!muted;lsSet("sov-mute",muted?"1":null);if(!muted)play("turn");render();break;
     case"focus":addOrder({t:"focus",region:sel});break;
