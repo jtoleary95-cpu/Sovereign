@@ -236,9 +236,9 @@ function article5(S,ally,victim,attacker,choice,pct,resp){const na=NAT[ally].nam
   else if(choice==="support"){if(resp?.basing)article5(S,ally,victim,attacker,"basing");if(resp?.pct)article5(S,ally,victim,attacker,"funds",resp.pct);if(!resp?.basing&&!resp?.pct)article5(S,ally,victim,attacker,"basing")}
   else{setLevel(S,ally,victim,-1);log(S,"all",`${na} ignored Article 5. Its alliance with ${NAT[victim].name} is over.`)}}
 function botArticle5(S,ally,victim,attacker){const ms=strength(S,ally),as=strength(S,attacker);const c=ms>as*0.8&&chance(0.6)?"war":chance(0.5)?"funds":chance(0.7)?"basing":"nothing";article5(S,ally,victim,attacker,c,10)}
-function reviewWars(S,id,why){const n=S.nations[id];for(const e of alive(S)){if(e===id||!atWar(S,id,e))continue;const R=rel(S,id,e),aggr=R.aggressor===id;
-    if(n.human){offer(S,e,id,"govReview",{why});continue}
-    n.peaceMood=S.turn+4;if(!chance(aggr?0.75:0.45)){log(S,"all",`${NAT[id].name}'s new government will keep fighting ${NAT[e].name}.`);continue}
+const nextPolicy=t=>(Math.floor((t-1)/5)+1)*5+1;
+function reviewWars(S,id,why,auto){const n=S.nations[id];n.newGov=nextPolicy(S.turn);for(const e of alive(S)){if(e===id||!atWar(S,id,e))continue;const R=rel(S,id,e),aggr=R.aggressor===id;
+    if(n.human&&!auto){offer(S,e,id,"govReview",{why});continue}if(!chance(aggr?0.75:0.45)){log(S,"all",`${NAT[id].name}'s new government will keep fighting ${NAT[e].name}.`);continue}
     let t={terms:"none"};if(aggr){const mine=owned(S,id).filter(r=>r!==n.capital).sort((x,y)=>S.regions[x].pop-S.regions[y].pop);t=chance(0.5)||!mine.length?{terms:"payTribute",pct:pick([10,20])}:{terms:"giveRegion",region:mine[0]}}
     log(S,"all",`${NAT[id].name}'s new government is seeking peace with ${NAT[e].name}.`);const o=offer(S,id,e,"peace",t);
     if(!S.nations[e].human){const yes=botRespond(S,o);applyOffer(S,o,yes,yes?null:botCounter(S,o));S.offers=S.offers.filter(x=>x.id!==o.id)}}}
@@ -259,7 +259,7 @@ function eliminate(S,id,why){const n=S.nations[id];if(!n.alive)return;n.alive=fa
 function breakAway(S,id,why){const cands=owned(S,id).filter(r=>r!==S.nations[id].capital);if(!cands.length)return;const r=pick(cands);S.regions[r].owner=null;S.regions[r].def=0;
   log(S,"all",`${REG[r].n} broke away from ${NAT[id].name} (${why}).`)}
 
-function changeGov(S,id,to,why){const n=S.nations[id];if(n.gov===to)return;n.gov=to;if(n.human&&pol(S)&&(why==="coup"||why==="overthrow")){n.deposed=null;n._depose=why}if(to==="dem"&&n.fac){n.partyChosen=!n.human;n.govTerms=0;if(!n.human){n.myParty=pick(["A","B"]);n.govParty=n.myParty}}n.forced=0;n.tax=Math.min(n.tax,maxTax(n));log(S,"all",`${NAT[id].name} is now a ${GOVN[to]} (${why}).`);if(n._depose){const w=n._depose;n._depose=null;depose(S,id,w)}reviewWars(S,id,why)}
+function changeGov(S,id,to,why){const n=S.nations[id];if(n.gov===to)return;n.gov=to;if(n.human&&pol(S)&&(why==="coup"||why==="overthrow")){n.deposed=null;n._depose=why}if(to==="dem"&&n.fac){n.partyChosen=!n.human;n.govTerms=0;if(!n.human){n.myParty=pick(["A","B"]);n.govParty=n.myParty}}n.forced=0;n.tax=Math.min(n.tax,maxTax(n));log(S,"all",`${NAT[id].name} is now a ${GOVN[to]} (${why}).`);if(n._depose){const w=n._depose;n._depose=null;depose(S,id,w)}reviewWars(S,id,why,!!(n.human&&(n.deposed||(n.gov==="dem"&&n.fac&&!govMine(n)))))}
 
 function spyCaught(S,from,to,mission){const R=rel(S,from,to),verb=MISSION_VERB[mission]||"spy";
   log(S,to,`You caught a spy from ${NAT[from].name} trying to ${verb}.`);log(S,from,`Your spy in ${NAT[to].name} was caught trying to ${verb}.`);
@@ -298,7 +298,7 @@ function applyOffer(S,o,accept,resp){if(o.kind==="allyName"){answerVote(S,o,acce
   const na=NAT[a].name,nb=NAT[b].name,choice=resp?.choice;
   if(o.kind==="ally"){if(accept&&canAlly(R)&&canPair(S,a,b)){const gA=allianceOf(S,a),gB=allianceOf(S,b);if(!gA&&!gB)formAlliance(S,a,b);else if(gA){log(S,"all",`${nb} accepted ${na}'s invitation to ${allyName(S,gA)}. Other members must ratify.`);startJoin(S,gA,b,a)}else{log(S,"all",`${na} asked to join ${allyName(S,gB)}. ${nb} agreed; other members must ratify.`);startJoin(S,gB,a,b)}}else log(S,a,`${nb} declined your alliance${o.why?": "+o.why:""}.`)}
   else if(o.kind==="ratify"){answerJoin(S,o,accept)}
-  else if(o.kind==="trade"){if(accept&&R.level>=0){R.trade=true;log(S,"all",`${na} and ${nb} signed a trade deal.`)}else log(S,a,`${nb} declined your trade deal.`)}
+  else if(o.kind==="trade"){if(accept&&R.level>=0&&!sanctionPair(S,a,b)){R.trade=true;log(S,"all",`${na} and ${nb} signed a trade deal.`)}else log(S,a,`${nb} declined your trade deal.`)}
   else if(o.kind==="peace"){if(R.level!==-2)return;
     if(choice==="counter"){const c=offer(S,b,a,"peace",{terms:resp.terms||"none",pct:resp.pct,region:resp.region});
       log(S,a,`${nb} countered your peace offer: ${termsFor(c,a)}.`);log(S,"all",`${nb} made a counter-offer to ${na}'s peace proposal.`);
@@ -332,7 +332,7 @@ function allyVeto(S,me,them){const R=rel(S,me,them);if(!canAlly(R))return "relat
 function botPeace(S,o){const me=o.to,them=o.from,ms=strength(S,me),ts=strength(S,them);let p=ms<ts*0.8?0.8:ms<ts*1.2?0.5:0.25;
   const pct=(o.pct||20)/100,totPop=owned(S,me).reduce((t,r)=>t+S.regions[r].pop,0)||1,oPop=owned(S,them).reduce((t,r)=>t+S.regions[r].pop,0)||1;
   if(o.terms==="stopNukes")p-=0.25;if(o.terms==="getTribute")p-=pct*1.5;if(o.terms==="payTribute")p+=pct;if(o.terms==="getRegion")p-=(S.regions[o.region]?.pop||0)/totPop*2;if(o.terms==="giveRegion")p+=(S.regions[o.region]?.pop||0)/oPop;
-  if(S.nations[me].peaceMood>S.turn)p+=rel(S,me,them)?.aggressor===me?0.35:0.15;if(hasPublicBomb(S,them))p+=0.3;p+=(S.nations[me].nukedBy?.[them]||0)/100;
+  if(S.nations[me].newGov>S.turn)p+=0.2;if(hasPublicBomb(S,them))p+=0.3;p+=(S.nations[me].nukedBy?.[them]||0)/100;
   return chance(clamp(p,0.03,0.95))}
 function botCounter(S,o){const me=o.to,them=o.from;if(o.kind!=="peace"||!chance(0.5))return null;const ms=strength(S,me),ts=strength(S,them);
   if(ms>ts*1.2)return{choice:"counter",terms:"getTribute",pct:10};if(o.terms&&o.terms!=="none")return{choice:"counter",terms:"none"};return null}
@@ -401,6 +401,7 @@ function resolve(S0,humanOrders){const S=JSON.parse(JSON.stringify(S0));S.log=S.
         for(let i=0;i<k;i++){const src=cg.pop>5?dest:owned(S,id).sort((a,b)=>S.regions[b].pop-S.regions[a].pop)[0];if(!src||S.regions[src].pop<=5)break;S.regions[src].pop--;cg.troops++;made++}n.cash-=made*COST.troop;if(made)log(S,id,`Recruited ${made} troops in ${REG[dest].n} from the treasury.`)}}}
     if(!n.capital){const rs=owned(S,id).sort((a,b)=>S.regions[b].pop-S.regions[a].pop);if(rs[0]){n.capital=rs[0];n.unrest=clamp(n.unrest+15,0,100);log(S,"all",`${NAT[id].name} moved its capital to ${REG[rs[0]].n}.`)}}}
   for(const id of ids)for(const o of orders[id]){if(o.t==="party"&&pol(S)){const n=S.nations[id];if(n.gov==="dem"&&n.fac&&!n.partyChosen&&(o.p==="A"||o.p==="B")){n.myParty=o.p;n.govParty=o.p;n.partyChosen=true;log(S,id,`You lead the ${PARTY[o.p]}.`)}}if(o.t==="pol")runPolAction(S,id,o);if(o.t==="nukeAnnounce"&&nukes(S)&&S.nations[id].nuke?.done)announceBomb(S,id);if(o.t==="npt"&&nukes(S)){if(o.join)joinNPT(S,id);else leaveNPT(S,id)}if(o.t==="sanction"&&nukes(S)){if(o.join)joinSanctions(S,id,o.target);else leaveSanctions(S,id,o.target)}
+      if(o.t==="nukeToggle"&&nukes(S)&&o.on&&outOfPower(S.nations[id])){log(S,id,"You can't run a nuclear program while out of power.");continue}
       if(o.t==="nukeToggle"&&nukes(S)&&o.on&&inNPT(S,id)){log(S,id,"Treaty members can't run a nuclear program. Withdraw from the treaty first.");continue}
       if(o.t==="nukeToggle"&&nukes(S)){const N=nk(S.nations[id]);if(!N.done){N.on=!!o.on;log(S,id,N.on?"Nuclear program funded.":"Nuclear program paused.")}}}
   for(const id of ids)for(const o of orders[id])if(o.t==="renameAlliance"){const g=allianceOf(S,id);const nm=String(o.name||"").trim().slice(0,32);if(g&&nm&&!g.vote)startVote(S,g,nm,true,id)}
@@ -421,7 +422,7 @@ function resolve(S0,humanOrders){const S=JSON.parse(JSON.stringify(S0));S.log=S.
     else if(o.kind==="cancelTrade"&&R.trade){R.trade=false;log(S,"all",`${NAT[id].name} cancelled its trade deal with ${NAT[tg].name}.`)}
     else if(o.kind==="gift"&&o.amount>0&&spend(S,id,Math.min(o.amount,S.nations[id].cash))){S.nations[tg].cash+=o.amount;if(R.level>=-1&&R.level<1){setLevel(S,id,tg,R.level+1)}log(S,tg,`${NAT[id].name} sent you a gift of ${o.amount}.`);log(S,id,`Gift of ${o.amount} delivered to ${NAT[tg].name}.`)}
     else if(["ally","trade","peace","tribute"].includes(o.kind)){if(o.threat)o.threat=nukeThreat(S,id,tg);
-      if(o.kind==="ally"&&(!canAlly(R)||!canPair(S,id,tg)))continue;if(o.kind==="trade"&&(R.level<0||R.trade))continue;if(o.kind==="peace"&&R.level!==-2)continue;if(o.kind==="tribute"&&R.level===2)continue;
+      if(o.kind==="ally"&&(!canAlly(R)||!canPair(S,id,tg)))continue;if(o.kind==="trade"&&(R.level<0||R.trade))continue;if(o.kind==="trade"&&sanctionPair(S,id,tg)){log(S,id,`No trade with ${NAT[tg].name} while sanctions are in place.`);continue}if(o.kind==="peace"&&R.level!==-2)continue;if(o.kind==="tribute"&&R.level===2)continue;
       const off=offer(S,id,tg,o.kind,{terms:o.terms,region:o.region,pct:o.pct,threat:!!o.threat});
       if(!S.nations[tg].human){const yes=botRespond(S,off),ctr=yes?null:botCounter(S,off);applyOffer(S,off,yes,ctr);S.offers=S.offers.filter(x=>x.id!==off.id)}
       else log(S,tg,`${NAT[id].name} sent you ${o.kind==="ally"?"an alliance proposal":o.kind==="trade"?"a trade deal":o.kind==="peace"?"a peace offer":"a tribute demand"}.`)}}
@@ -462,7 +463,7 @@ function resolve(S0,humanOrders){const S=JSON.parse(JSON.stringify(S0));S.log=S.
     else{if(tw)log(S,tw,`You held ${REG[A.to].n} against ${NAT[A.by].name}: they lost all ${A.n} attackers, you lost ${A.def0-res.def} of ${A.def0} defenders.`);log(S,A.by,`Battle for ${REG[A.to].n}: you sent ${A.n} against ${A.def0} defenders and lost all ${A.n}. The defenders lost ${A.def0-res.def}.`)}}
   // economy
   for(const id of alive(S)){const n=S.nations[id];if(!n.alive)continue;if(n.forced>0){const F=pol(S)?(PARTY_POLICY[n.govParty]||OPP_POLICY):FORCED;n.tax=F.tax;n.budget={...F.budget}}
-    let inc=income(S,id);if(nukes(S)){inc=sanctionHit(S,id,inc);inc=nukeEconomy(S,id,inc);nukeStockpile(S,id);if(S.sanctions?.[id]&&!knownBombs(S,id)&&inNPT(S,id))delete S.sanctions[id]}n.cash+=inc*n.budget.res/100;
+    let inc=income(S,id);if(nukes(S)){inc=sanctionHit(S,id,inc);inc=nukeEconomy(S,id,inc);nukeStockpile(S,id);if(S.sanctions?.[id]&&!knownBombs(S,id)&&!knownProgram(S,id))delete S.sanctions[id]}n.cash+=inc*n.budget.res/100;
     const cap=n.capital&&S.regions[n.capital]?.owner===id?n.capital:owned(S,id)[0];if(!cap)continue;
     const draft=(k,to,defense)=>{let made=0;for(let i=0;i<k;i++){const src=S.regions[to].pop>5?to:owned(S,id).sort((a,b)=>S.regions[b].pop-S.regions[a].pop)[0];if(!src||S.regions[src].pop<=5)break;S.regions[src].pop--;if(defense)S.regions[to].def++;else S.regions[to].troops++;made++}return made};
     const df=n.defFocus&&S.regions[n.defFocus]?.owner===id?n.defFocus:cap;
@@ -475,7 +476,7 @@ function resolve(S0,humanOrders){const S=JSON.parse(JSON.stringify(S0));S.log=S.
   for(const id of alive(S)){const n=S.nations[id];
     if(n.unrest>85)for(const r of owned(S,id))if(r!==n.capital&&chance(0.03)){S.regions[r].owner=null;S.regions[r].def=0;log(S,"all",`${REG[r].n} rebelled against ${NAT[id].name} and declared independence.`)}
     {const u=n.unrest,p=u>=100?1:u>=90?0.75:u>=80?0.5:u>=70?0.25:0;if(p&&chance(p))revolution(S,id)}
-    if(pol(S)){politicsTurn(S,id);if(chance(0.05))fireEvent(S,id,true)}
+    if(pol(S)){politicsTurn(S,id);if(chance(0.05))fireEvent(S,id,true);if(nukes(S))protestTurn(S,id)}
     else{if(n.gov==="dic"&&n.lostThisTurn>0&&chance(0.08*n.lostThisTurn))coup(S,id,"military defeat");
     if(n.gov==="mon"&&n.capAttacked&&chance(0.25))crisis(S,id,"capital under attack")}}
   // elections at end of each term
@@ -590,7 +591,8 @@ function runElection(S,id){const n=S.nations[id],P=electionProjection(S,id);let 
   const detail=[...P.rows].sort((a,b)=>b.pop-a.pop).slice(0,4).map(x=>`${REG[x.r].n} ${x.v}%`).join(", ");
   log(S,id,`Election: your ${PARTY[mine]} took ${P.you}% (${detail}).`);
   if(youWin){n.forced=0;n.oppBlock=false;log(S,"all",`${NAT[id].name}: the ${PARTY[mine]} ${was===mine?"held power":"returned to power"}.`)}
-  else{n.forced=5;n.oppBlock=true;log(S,"all",`${NAT[id].name}: the ${PARTY[other(mine)]} won the election. It sets policy for 5 turns and can block one declaration of war.`);if(was===mine)reviewWars(S,id,"election")}}
+  else{n.forced=5;n.oppBlock=true;log(S,"all",`${NAT[id].name}: the ${PARTY[other(mine)]} won the election. It sets policy for 5 turns and can block one declaration of war.`);if(was===mine)reviewWars(S,id,"election",true)}
+  if(youWin&&was!==mine)reviewWars(S,id,"back in power")}
 /* events */
 const EVENTS=[
   {id:"taxprotest",when:n=>n.tax>25,t:"Workers are protesting high taxes.",c:[["Cut taxes 5%",n=>{n.tax=Math.max(0,n.tax-5);appr(n,"work",6)}],["Spend 20 money to calm them",(n,S,id)=>{if(spend(S,id,20)){n.unrest=clamp(n.unrest-5,0,100);appr(n,"work",5)}else appr(n,"work",-10)},20],["Ignore them",n=>{appr(n,"work",-10);n.unrest=clamp(n.unrest+5,0,100)}]]},
@@ -626,12 +628,12 @@ const NUKE_TURNS=8,NUKE_FUND=15,NUKE_MAX=3,NUKE_EVERY=5,NUKE_LEAK=0.04,WASTE_TUR
 const nukes=S=>!!S.opts?.nukes;
 const hasPublicBomb=(S,id)=>nukes(S)&&S.nations[id]?.nuke?.public&&S.nations[id].nuke.bombs>0;
 function nk(n){if(!n.nuke)n.nuke={on:false,progress:0,done:false,public:false,bombs:0,lastBuild:0};return n.nuke}
-function exposeProgram(S,id,how){const n=S.nations[id],N=nk(n);if(N.public)return;N.public=true;
+function exposeProgram(S,id,how){const n=S.nations[id],N=nk(n);if(N.public)return;N.public=true;goesPublic(S,id);natBomb(S,id);
   log(S,"all",`${NAT[id].name}'s secret nuclear ${N.done?"arsenal":"program"} was exposed (${how}).`);
   for(const o of alive(S)){if(o===id)continue;const R=rel(S,id,o);if(!R||R.level===-2)continue;if(R.trade){R.trade=false}S.nations[id].tradeBlock=S.turn+2;
     setLevel(S,id,o,Math.max(-1,R.level-1));if(rel(S,id,o).level===-1)addGriev(S,o,id)}
   log(S,"all",`Trade deals with ${NAT[id].name} were cancelled and its ambassadors summoned.`);sanctionPrompt(S,id)}
-function announceBomb(S,id){const N=nk(S.nations[id]);if(N.public)return;N.public=true;log(S,"all",`${NAT[id].name} tested a nuclear bomb. The world now knows it has the bomb.`);sanctionPrompt(S,id);
+function announceBomb(S,id){const N=nk(S.nations[id]);if(N.public)return;N.public=true;goesPublic(S,id);natBomb(S,id);log(S,"all",`${NAT[id].name} tested a nuclear bomb. The world now knows it has the bomb.`);sanctionPrompt(S,id);
   for(const o of alive(S)){if(o===id)continue;const R=rel(S,id,o);if(R&&R.level>-2)setLevel(S,id,o,Math.max(-1,R.level-1))}}
 function nukeEconomy(S,id,inc){const n=S.nations[id],N=nk(n);if(!nukes(S)||N.done||!N.on)return inc;
   N.progress++;if(!N.public&&chance(NUKE_LEAK))exposeProgram(S,id,"leak");
@@ -641,7 +643,7 @@ function nukeEconomy(S,id,inc){const n=S.nations[id],N=nk(n);if(!nukes(S)||N.don
 function nukeStockpile(S,id){const N=nk(S.nations[id]);if(N.done&&N.bombs>=NUKE_MAX){N.lastBuild=S.turn;return}if(N.done&&N.bombs<NUKE_MAX&&S.turn-N.lastBuild>=NUKE_EVERY){N.bombs++;N.lastBuild=S.turn;log(S,id,`Your stockpile grew to ${N.bombs} bomb${N.bombs>1?"s":""}.`)}}
 const wasted=(S,r)=>(S.regions[r].waste||0)>S.turn;
 function nukeStrike(S,id,r){const n=S.nations[id],N=nk(n),g=S.regions[r];if(!nukes(S)||N.bombs<=0||!g||wasted(S,r)||g.owner===id||S.turn<CEASEFIRE)return;
-  const tw=g.owner;if(tw&&allied(S,id,tw))return;N.bombs--;if(!N.public){N.public=true;sanctionPrompt(S,id)}
+  const tw=g.owner;if(tw&&allied(S,id,tw))return;if(!N.public){N.public=true;goesPublic(S,id);natBomb(S,id);sanctionPrompt(S,id)}N.bombs--;
   if(tw&&!atWar(S,id,tw))declareWar(S,id,tw,"nuclear strike",true);
   g.troops=0;g.def=0;g.guest=null;g.infra=0;g.pop=Math.max(1,Math.floor(g.pop*0.1));g.owner=null;g.waste=S.turn+WASTE_TURNS;
   if(tw){const tn=S.nations[tw];if(tn.capital===r){tn.capital=null}tn.lostThisTurn++;tn.termLosses++;tn.nukedBy=tn.nukedBy||{};tn.nukedBy[id]=(tn.nukedBy[id]||0)+33.3}
@@ -670,6 +672,7 @@ function leaveNPT(S,id){if(!inNPT(S,id))return;S.npt=S.npt.filter(x=>x!==id);for
 function joinSanctions(S,by,t){if(!(knownBombs(S,t)||knownProgram(S,t))||by===t)return;S.sanctions=S.sanctions||{};const L=S.sanctions[t]=S.sanctions[t]||[];if(L.includes(by))return;L.push(by);const R=rel(S,by,t);if(R?.trade)R.trade=false;
   log(S,"all",`${NAT[by].name} joined sanctions against ${NAT[t].name} (${L.length} nation${L.length>1?"s":""}).`)}
 function leaveSanctions(S,by,t){const L=S.sanctions?.[t];if(!L||!L.includes(by))return;S.sanctions[t]=L.filter(x=>x!==by);if(!S.sanctions[t].length)delete S.sanctions[t];log(S,"all",`${NAT[by].name} left the sanctions against ${NAT[t].name}.`)}
+const sanctionPair=(S,a,b)=>(S.sanctions?.[a]||[]).includes(b)||(S.sanctions?.[b]||[]).includes(a);
 function sanctionHit(S,id,inc){const k=(S.sanctions?.[id]||[]).filter(x=>S.nations[x]?.alive).length;if(!k)return inc;const n=S.nations[id];n.unrest=clamp(n.unrest+3*k,0,100);return inc*Math.max(0,1-0.1*k)}
 function stopProgram(S,id,why){const N=nk(S.nations[id]);N.on=false;N.progress=0;joinNPT(S,id,why)}
 function botNukeDiplo(S,id){const n=S.nations[id],O=[];if(!nukes(S))return O;const N=nk(n);
@@ -686,7 +689,7 @@ function depose(S,id,why){const n=S.nations[id];if(!n.human||!pol(S))return;
   if(n.gov==="dem"){n.govParty=other(myParty(n));n.forced=5;n.oppBlock=true;log(S,id,`You were driven from power (${why}). The ${PARTY[n.govParty]} now governs. Win the next election to return.`);return}
   n.deposed={support:15,since:S.turn};log(S,id,`You were driven from power (${why}). The new regime sets policy. Build support on each consolidation turn: if it beats the regime's loyalty at a term's end, you retake power.`)}
 function powerStruggle(S,id){const n=S.nations[id];if(!n.deposed)return;
-  if(n.deposed.support>n.loyalty){log(S,"all",`${NAT[id].name}: the deposed leadership seized back power.`);log(S,id,`Your support (${Math.round(n.deposed.support)}) beat the regime's loyalty (${Math.round(n.loyalty)}). You're back in control.`);n.deposed=null;n.loyalty=55}
+  if(n.deposed.support>n.loyalty){log(S,"all",`${NAT[id].name}: the deposed leadership seized back power.`);log(S,id,`Your support (${Math.round(n.deposed.support)}) beat the regime's loyalty (${Math.round(n.loyalty)}). You're back in control.`);n.deposed=null;n.loyalty=55;reviewWars(S,id,"back in power")}
   else log(S,id,`Power struggle: your support ${Math.round(n.deposed.support)} vs regime loyalty ${Math.round(n.loyalty)}. The regime holds on.`)}
 
 function sanctionPrompt(S,t){for(const o of alive(S)){if(o===t||(S.sanctions?.[t]||[]).includes(o))continue;
@@ -695,6 +698,18 @@ function sanctionPrompt(S,t){for(const o of alive(S)){if(o===t||(S.sanctions?.[t
 function nukeThreat(S,id,tg){if(!hasPublicBomb(S,id))return false;for(const o of alive(S)){if(o===id||allied(S,id,o))continue;const R=rel(S,id,o);if(R&&R.level>-2)setLevel(S,id,o,Math.max(-1,R.level-1))}
   log(S,"all",`☢ ${NAT[id].name} backed its demand to ${NAT[tg].name} with a nuclear threat. The world recoiled.`);return true}
 function threatRefused(S,a,b){if(S.nations[a].human){offer(S,a,a,"threatRefused",{target:b})}else{if(S.nations[a].nuke?.bombs>0&&chance(0.5)){const r=owned(S,b).filter(x=>!wasted(S,x)).sort((x,y)=>S.regions[y].troops-S.regions[x].troops)[0];if(r)nukeStrike(S,a,r)}else{S.nations[a].unrest=clamp(S.nations[a].unrest+10,0,100);log(S,"all",`${NAT[a].name} backed down from its nuclear threat against ${NAT[b].name}.`)}}}
+
+/* ===== ANTI-NUCLEAR PROTESTS (advanced politics + nukes) ===== */
+const outOfPower=n=>!!(n.deposed||(n.gov==="dem"&&n.fac&&n.govParty&&!govMine(n)));
+function goesPublic(S,id){const N=nk(S.nations[id]);if(N.pubSince==null&&!N.accepted)N.pubSince=S.turn}
+function natBomb(S,id){const n=S.nations[id],N=nk(n);if(N.natBoost||!n.fac||!N.bombs)return;N.natBoost=true;appr(n,"nat",10);log(S,id,"Nationalists cheer your nuclear arsenal. Their approval rose.")}
+function protestTurn(S,id){const n=S.nations[id],N=n.nuke;if(!N||N.pubSince==null)return;
+  if(S.turn-N.pubSince>=3){N.pubSince=null;N.accepted=true;log(S,"all",`The people of ${NAT[id].name} have accepted it as a nuclear power. The protests are over.`);return}
+  if(!chance(0.3))return;log(S,"all",`Anti-nuclear protests broke out in ${NAT[id].name}.`);if(!chance(0.3))return;
+  const wasBombs=N.bombs>0;dismantle(S,id);N.pubSince=null;N.accepted=false;N.natBoost=false;if(S.sanctions?.[id]){delete S.sanctions[id];log(S,"all",`Sanctions on ${NAT[id].name} were lifted.`)}
+  log(S,"all",`Anti-nuclear protests toppled the leaders of ${NAT[id].name}. Its nuclear ${wasBombs?"arsenal was destroyed":"program was shut down"} and its research erased.`);
+  if(n.human){if(n.gov==="dem"&&n.fac){const mine=myParty(n);n.govParty=other(mine);n.forced=5;n.oppBlock=true;n.govTerms=0;log(S,id,`The ${PARTY[n.govParty]} now governs. Win the next election to return.`)}else{n.deposed={support:15,since:S.turn};log(S,id,"You were driven from power. Build support on consolidation turns to retake it.")}reviewWars(S,id,"anti-nuclear protests",true)}
+  else reviewWars(S,id,"anti-nuclear protests")}
 const BAD=["CUM","DIC","COC","PUS","KOC","WHR","FAP","JAP","SPIC","SPC","CHNK","GOOK","GK","HOMO","HMO","TRAN","LES","LEZ","QUER","DYKE","KUM","JIZ","JZZ","SEX","SXY","SX","XXX","FUK","FUC","FUQ","FUX","FCK","FK","FKU","PHUK","CUNT","CNT","KUNT","COCK","COK","KOK","CCK","DIK","DICK","DCK","DIX","DYK","PUSS","PUSY","PSY","PSSY","TIT","TT","TWAT","TWT","VAG","VAJ","VJ","BJ","HJ","ANAL","ANL","ANUS","ASS","AZZ","BUTT","BUT","BUM","BUTTH","BOOB","BOB","NUT","NUTS","PORN","PRN","PORNO","HORNY","HRNY","HUMP","SLUT","SLT","WHORE","WHOR","HOE","HO","THOT","SUCK","SUK","SUCC","LICK","LCK","BLOW","BJOB","CLIT","CLT","PENIS","PENI","PNS","PEN","WANK","WNK","JERK","JRK","NUDE","NUD","FAG","FAGG","FGT","GAY","NIG","NIGG","NGR","NGGR","NGA","KKK","KK","NAZI","NAZ","NZ","HITLR","SHIT","SHT","SHT","CRAP","CRP","PISS","PIS","PSS","PEE","POO","POOP","TURD","DAMN","DMN","DAM","HELL","HEL","BTCH","BICH","BCH","BITCH","DUMB","STFU","WTF","FML","FU","KYS","DIE","KILL","RAPE","RAP","RAPY","MOLEST","PEDO","PED","CHILD","DRUG","METH","LSD","WEED","HMP","MILF","MLF","GILF","DILF","BDSM","BDS","KINK","NSFW","HENT","HNTY","XXL","SEXY","SEXI"];
 function isClean(s){const u=String(s).toUpperCase().replace(/[^A-Z]/g,"");return !BAD.some(b=>u.includes(b))}
 /* ===== ALLIANCE GROUPS ===== */
@@ -837,7 +852,7 @@ const orderText=o=>{switch(o.t){
   case"focus":return `Rally point: ${REG[o.region].n}`;
   case"recruit":return `Recruit ${o.n} troops in ${REG[o.region]?.n||"rally point"} from treasury`;
   case"airlift":return `Air-drop ${o.n} from ${REG[o.from].n} to ${REG[o.to].n} (whole turn)`;
-  case"pol":return POLN[o.kind]+(o.region?`: ${REG[o.region].n}`:"")+(o.faction?`: ${FACN[o.faction]}`:"")+(POL_COST[o.kind]?` (${POL_COST[o.kind]})`:"");
+  case"pol":if(o.kind==="none")return "No political action this turn";return POLN[o.kind]+(o.region?`: ${REG[o.region].n}`:"")+(o.faction?`: ${FACN[o.faction]}`:"")+(POL_COST[o.kind]?` (${POL_COST[o.kind]})`:"");
   case"nukeToggle":return o.on?"Fund the nuclear program":"Pause the nuclear program";
   case"nukeAnnounce":return "☢ Announce the bomb with a test";
   case"party":return `Lead the ${PARTY[o.p]}`;
@@ -877,7 +892,7 @@ function render(){const f=document.activeElement?.id;
   else if(screen==="game")app.innerHTML=gameHTML();
   relabel(app);if(f&&document.getElementById(f))document.getElementById(f).focus()}
 function homeHTML(){const hasSolo=!!lsGet("sov-solo"),hasMp=!!lsGet("sov-code");
-  return `<header class="hero"><h1>Sovereign <span class="ver">v16</span></h1><p class="lede">Five nations. One world. Hold every capital for three turns and it's yours.</p></header>
+  return `<header class="hero"><h1>Sovereign <span class="ver">v17</span></h1><p class="lede">Five nations. One world. Hold every capital for three turns and it's yours.</p></header>
   <div class="stack">
   ${hasSolo?`<button class="btn primary" data-act="resumeSolo">Resume solo game</button>`:""}
   <button class="btn ${hasSolo?"":"primary"}" data-act="newSolo">New solo game</button>
@@ -922,7 +937,7 @@ function pickHTML(){const P=pickState(),taken=Object.keys(P.claims||{}),mine=cla
 /* ---------- game screen ---------- */
 function gameHTML(){if(!S)return `<p class="muted">Loading…</p>`;const n=S.nations[myNat];
   const pol=isPolicyTurn(S),inc=Math.round(income(S,myNat)),left=Math.floor(n.cash-spendQueued());
-  let h=`<header class="gbar" style="--nc:${NAT[myNat].color}"><div class="who"><span class="chip"></span><b>${NAT[myNat].name}</b><span class="ver">v16</span><span class="muted">${GOVN[n.gov]}</span></div>
+  let h=`<header class="gbar" style="--nc:${NAT[myNat].color}"><div class="who"><span class="chip"></span><b>${NAT[myNat].name}</b><span class="ver">v17</span><span class="muted">${GOVN[n.gov]}</span></div>
     <button class="quit" data-act="quitAsk" aria-label="Quit game">Quit</button><button class="mute" data-act="mute" aria-label="Sound settings">${muted?"🔇":"🔊"}</button>
     <div class="stats"><span>Turn <b>${S.turn}</b>${pol?` <em class="tag">Policy</em>`:""}</span><span>Treasury <b>${left}</b></span><span>Income <b>+${inc}</b></span><span class="${n.unrest>70?"hot":""}">Unrest <b>${Math.round(n.unrest)}</b></span>${S.opts?.politics&&n.gov==="dem"&&n.fac?(()=>{const P=electionProjection(S,myNat);return `<span class="${P.you<50?"hot":""}">Polls <b>${P.you}%</b></span>`})():""}</div></header>`;
   if(S.over)h+=overHTML();
@@ -941,7 +956,9 @@ function gameHTML(){if(!S)return `<p class="muted">Loading…</p>`;const n=S.nat
   h+=`<nav class="tabs">${tabs.map(([k,l])=>`<button class="${tab===k?"on":""}" data-act="tab" data-id="${k}">${l}</button>`).join("")}</nav>`;
   if(!n.capital&&n.alive)h+=`<div class="warn">Your capital has fallen. Pick a new one on the map. ${S.regions[NAT[myNat].home].owner!==myNat&&n.lostSince!==null?`Retake ${REG[NAT[myNat].home].n} within ${5-(S.turn-n.lostSince)} turns or your nation falls.`:""}</div>`;
   else if(n.alive&&S.regions[NAT[myNat].home].owner!==myNat&&n.lostSince!==null)h+=`<div class="warn">Retake ${REG[NAT[myNat].home].n} within ${Math.max(0,5-(S.turn-n.lostSince))} turns or your nation falls.</div>`;
-  if(pol&&n.alive&&!S.over&&n.forced<=0&&!myOrders.some(o=>o.t==="policy"))h+=`<div class="notice"><b>Policy year.</b> Set taxes and your budget for the next 5 turns.${tab!=="pol"?` <button class="btn small" data-act="tab" data-id="pol">Open policy</button>`:""}</div>`;
+  if(pol&&n.alive&&!S.over&&(n.forced>0||n.deposed))h+=`<div class="notice"><b>Policy year.</b> ${n.deposed?"The regime":"The opposition"} controls policy this term. You can't set taxes or the budget.</div>`;
+  else if(pol&&n.alive&&!S.over&&!myOrders.some(o=>o.t==="policy"))h+=`<div class="notice"><b>Policy year.</b> Set taxes and your budget for the next 5 turns. You can't end the turn until you do.${tab!=="pol"?` <button class="btn small" data-act="tab" data-id="pol">Open policy</button>`:""}</div>`;
+  {const sn=(S.sanctions?.[myNat]||[]).filter(x=>S.nations[x]?.alive);if(sn.length&&n.alive&&!S.over)h+=`<div class="warn"><b>You're under sanctions</b> from ${sn.map(x=>NAT[x].name).join(", ")}: −${sn.length*10}% income and +${sn.length*3} unrest every turn. No trade with them until it ends.</div>`}
   h+=tab==="map"?mapTab():tab==="dip"?dipTab():tab==="spy"?spyTab():tab==="pol"?polTab():tab==="polit"&&S.opts?.politics?politicsTab():logTab();
   if(!S.over&&n.alive)h+=ordersHTML();
   if(introOpen)h+=`<div class="sheet" role="dialog" aria-label="How to play"><div class="inner"><h2>Welcome, leader of ${NAT[myNat].name}</h2>
@@ -957,7 +974,7 @@ function gameHTML(){if(!S)return `<p class="muted">Loading…</p>`;const n=S.nat
   return h}
 function resultsHTML(){const L=S.log.filter(l=>l.t===results&&(l.to==="all"||l.to===myNat));
   return `<div class="sheet" role="dialog" aria-label="Turn results"><div class="inner"><h2>Turn ${results} results</h2>${L.length?L.map(l=>`<p class="logl ${l.to===myNat?"mine":""}">${esc(l.text)}</p>`).join(""):`<p class="muted">A quiet turn.</p>`}
-  ${isPolicyTurn(S)&&!S.over?`<p class="notice"><b>Policy year.</b> Set taxes and your budget this turn.</p>`:""}<button class="btn primary wide" data-act="closeResults">Continue to turn ${S.turn}</button></div></div>`}
+  ${isPolicyTurn(S)&&!S.over?(S.nations[myNat].forced>0||S.nations[myNat].deposed?`<p class="notice"><b>Policy year.</b> ${S.nations[myNat].deposed?"The regime":"The opposition"} controls policy this term.</p>`:`<p class="notice"><b>Policy year.</b> Set taxes and your budget this turn.</p>`):""}<button class="btn primary wide" data-act="closeResults">Continue to turn ${S.turn}</button></div></div>`}
 let confirmAtk=null,confirmNuke=null;
 function nukeConfirmHTML(){const r=confirmNuke,g=S.regions[r],o=g.owner;return `<div class="sheet" role="dialog" aria-label="Confirm nuclear strike"><div class="inner"><h2>☢ Nuclear strike on ${REG[r].n}?</h2>
   <p>Every troop, defense and all infrastructure in ${REG[r].n} will be destroyed and 90% of its people killed. It becomes wasteland for ${WASTE_TURNS} turns.${o?` It's an act of war against ${NAT[o].name}.`:""}</p>
@@ -1048,12 +1065,13 @@ function dipTab(){const n=S.nations[myNat];let h="";const offs=S.offers.filter(o
       +(S.opts?.politics&&N.fac?`<p class="kv">${FAC.map(f=>`<span>${FACN[f]} <b>${Math.round(N.fac[f].size)}%</b> / ${Math.round(N.fac[f].appr)}</span>`).join("")}<span>Climate <b>${Object.entries(climate(N)).map(([g,v])=>GOVN[g].slice(0,3)+" "+v+"%").join(", ")}</b></span>${N.gov!=="dem"?`<span>Loyalty <b>${Math.round(N.loyalty)}</b></span>`:""}</p>`:"")
       +(S.opts?.nukes&&N.nuke&&(S.nations[myNat].intel?.[o]||0)>=S.turn?`<p class="note">Intel on nuclear ambitions: ${N.nuke.done?`${N.nuke.bombs} bomb${N.nuke.bombs===1?"":"s"}${N.nuke.public?"":" (secret)"}`:N.nuke.on||N.nuke.progress>0?`program ${N.nuke.on?"running":"paused"}, ${N.nuke.progress} of ${NUKE_TURNS} turns done`:"no program"}${inNPT(S,o)?", treaty signer":""}.</p>`:""):"";
     h+=`<div class="ncard" style="--nc:${NAT[o].color}"><div class="nhead"><b>${NAT[o].name}</b><span class="muted">${GOVN[N.gov]}${N.human?", human":""}</span>${relBadge(o)}</div>
+      ${(S.sanctions?.[o]||[]).filter(x=>S.nations[x]?.alive).length?`<p class="warn small">Sanctioned by: ${(S.sanctions[o]).filter(x=>S.nations[x]?.alive).map(x=>NAT[x].name).join(", ")}.</p>`:""}
       <p class="note">${hasPublicBomb(S,o)?`☢ Nuclear power (${N.nuke.bombs} bomb${N.nuke.bombs>1?"s":""}). `:S.opts?.nukes&&knownProgram(S,o)?"☢ Known nuclear program. ":""}${S.opts?.nukes&&inNPT(S,o)?"Treaty signer. ":""}${allianceOf(S,o)?`Member of ${esc(allyName(S,allianceOf(S,o)))} (${alliesOf(S,o).map(x=>NAT[x].name).join(", ")}).`:"No alliance."}${grounds&&R.level>-2?` You have grounds for war until turn ${rel(S,myNat,o).griev[myNat]+3}.`:""}${N.tradeBlock>S.turn?" Trade income frozen.":""}</p>${info}<div class="row wrap">`;
     if(R.level===2&&alive(S).some(x=>atWar(S,myNat,x)))h+=`<span class="note">Ask for war money:</span>${[2,4,6,8,10].map(a=>`<button class="btn small ${myOrders.some(x=>x.t==="dip"&&x.kind==="askFunds"&&x.target===o&&x.amount===a)?"on":""}" data-act="askFunds" data-id="${o}" data-n="${a}">${a}</button>`).join("")}</div><div class="row wrap">`;
     if(S.opts?.nukes&&knownBombs(S,o)){const inS=(S.sanctions?.[o]||[]).includes(myNat),qs=myOrders.find(x=>x.t==="sanction"&&x.target===o);h+=`<button class="btn small ${qs?"on":""}" data-act="sanction" data-id="${o}" data-v="${inS?0:1}">${qs?"✓ ":""}${inS?"Leave sanctions":"Join sanctions"}</button><span class="note">${(S.sanctions?.[o]||[]).length} nation(s) sanctioning. Each costs them 10% income and +3 unrest a turn. Joining cancels your trade with them. Ends when they dismantle and sign the treaty.</span></div><div class="row wrap">`}
     if(R.level===-2)h+=peaceSelect("terms-"+o,myNat,o)+b("peace","Offer peace");
     else{if(R.level===2)h+=b("breakAlly","Break alliance");else h+=b("ally",allianceOf(S,myNat)?"Invite to our alliance":allianceOf(S,o)?"Ask to join their alliance":"Propose alliance",canAlly(R)&&canPair(S,myNat,o));
-      if(R.trade)h+=b("cancelTrade","Cancel trade");else h+=b("trade","Trade deal",R.level>=0);
+      if(R.trade)h+=b("cancelTrade","Cancel trade");else h+=b("trade",sanctionPair(S,myNat,o)?"Trade deal (sanctions)":"Trade deal",R.level>=0&&!sanctionPair(S,myNat,o));
       h+=`</div><div class="row wrap"><span class="note">Gift</span>${[10,25,50].map(a=>`<button class="btn small ${myOrders.some(x=>x.t==="dip"&&x.kind==="gift"&&x.target===o&&x.amount===a)?"on":""}" data-act="gift" data-id="${o}" data-n="${a}">${a}</button>`).join("")}</div><div class="row wrap">`;
       if(R.level<2&&grounds&&canDeclare(S,myNat,o))h+=`</div><div class="row wrap">`+b("war","Declare war")+b("summon","Summon ambassador",R.level>-2)+`<span class="note">You have grounds against them.</span>`;
       if(S.opts?.nukes&&knownProgram(S,o))h+=`</div><div class="row wrap">`+b("nukeStop","Demand they stop their nuclear program")+`<span class="note">If they refuse, all their trade deals are cancelled and you gain grounds for war.</span>`;
@@ -1109,7 +1127,8 @@ function politicsTab(){const n=S.nations[myNat];if(!n.fac)return `<p class="note
     if(n.lastElection){const E=n.lastElection;h+=`<p class="note">Last election (turn ${E.turn}): ${E.won?"won":"lost"} with ${E.share}%. ${E.rows.sort((a,b)=>b.pop-a.pop).map(x=>`${REG[x.r].n} ${x.v}%`).join(", ")}.</p>`}}
   else h+=`<h3>${n.gov==="dic"?"Military":"Elite"} loyalty</h3>${bar(n.loyalty,n.loyalty<50?"lo":"")}<p class="note"><b>${Math.round(n.loyalty)}</b>. Below 50 the risk of a ${n.gov==="dic"?"coup":"succession crisis"} grows each turn. ${n.gov==="dic"?"Driven by wars won and lost and military spending.":"Driven by Business approval and low taxes."}</p>`;
   if(n.deposed)h+=`<h3>Power struggle</h3>${bar(n.deposed.support)}<p class="note">Your support <b>${Math.round(n.deposed.support)}</b> vs the regime's loyalty <b>${Math.round(n.loyalty)}</b>. Only your own actions raise your support.</p>`;
-  if(ptk){const used=myOrders.filter(o=>o.t==="pol").length,left=Math.floor(n.cash-spendQueued());h+=`<h3>${ptk==="campaign"?"Campaign":ptk==="struggle"?"Opposition":"Consolidation"} actions <span class="alloc">${used} of ${ACTION_CAP} used</span></h3>`;
+  if(ptk){const used=myOrders.filter(o=>o.t==="pol"&&o.kind!=="none").length,left=Math.floor(n.cash-spendQueued()),na=myOrders.some(o=>o.t==="pol"&&o.kind==="none");
+    h+=`<div class="row"><button class="btn small ${na?"on":""}" data-act="polNone" ${used?"disabled":""}>${na?"✓ No action this turn":"No action"}</button><span class="note">You must take at least one political action, or choose No action, before ending the turn.</span></div>`;h+=`<h3>${ptk==="campaign"?"Campaign":ptk==="struggle"?"Opposition":"Consolidation"} actions <span class="alloc">${used} of ${ACTION_CAP} used</span></h3>`;
     if(ptk==="struggle")h+=`<div class="row"><button class="btn small" data-act="polact" data-k="bribe" ${left>=POL_COST.bribe?"":"disabled"}>Bribe officers (${POL_COST.bribe} money)</button><span class="note">+8 support.</span></div>
       <div class="row"><button class="btn small" data-act="polact" data-k="loyalists" ${left>=POL_COST.loyalists?"":"disabled"}>Rally loyalists (${POL_COST.loyalists} money)</button><span class="note">+3 support.</span></div>`;
     else if(ptk==="campaign")h+=`<div class="row wrap"><select id="campR" aria-label="Region">${owned(S,myNat).map(r=>`<option value="${r}">${REG[r].n} (pop ${S.regions[r].pop})</option>`).join("")}</select><button class="btn small" data-act="polact" data-k="campaign" ${left>=POL_COST.campaign?"":"disabled"}>Campaign (${POL_COST.campaign} money)</button></div><p class="note">+8 points in that region. Big regions matter most.</p>
@@ -1138,9 +1157,13 @@ function nukeCard(){const n=S.nations[myNat],N=n.nuke;if(!S.opts?.nukes||!N)retu
   return h}
 function logTab(){const L=S.log.filter(l=>l.to==="all"||l.to===myNat).slice(-80).reverse();let h=`<h3>Reports</h3>`,t=null;
   for(const l of L){if(l.t!==t){t=l.t;h+=`<h4>Turn ${t}</h4>`}h+=`<p class="logl ${l.to===myNat?"mine":""}">${esc(l.text)}</p>`}return h}
-function ordersHTML(){const w=mode==="mp"&&submitted,tl=null;
+function endBlockers(){const n=S.nations[myNat],b=[];if(!n?.alive||S.over)return b;
+  if(isPolicyTurn(S)&&n.forced<=0&&!n.deposed&&!myOrders.some(o=>o.t==="policy"))b.push("Approve your budget: tap Set policy on the Policy tab.");
+  if(polTurnKind(S,n)&&!myOrders.some(o=>o.t==="pol"))b.push("Take at least one political action on the Politics tab, or tap No action.");return b}
+function ordersHTML(){const w=mode==="mp"&&submitted,tl=null,bl=endBlockers();
   return `<section class="orders"><h3>Orders this turn</h3>${myOrders.length?myOrders.map((o,i)=>`<div class="ord"><span>${esc(orderText(o))}</span>${w?"":`<button class="x" data-act="rmOrder" data-i="${i}" aria-label="Remove order">✕</button>`}</div>`).join(""):`<p class="note">No orders yet. Troops left in place defend.</p>`}</section>
   ${mode==="mp"&&lobby?(()=>{const other=Object.keys(lobby.players||{}).find(u=>u!==me),on=lobby.players?.[other];return lobby.done?.[other]?`<p class="notice small">${on?NAT[on].name:"Your friend"} has ended their turn.${submitted?"":" Waiting on you."}</p>`:submitted?`<p class="note">You've ended your turn. Your orders are locked in.</p>`:""})():""}
+  ${bl.length&&!w?`<div class="warn small"><b>Before you can end your turn:</b><br>${bl.join("<br>")}</div>`:""}
   <div class="endbar">${tl!==null?`<span class="timer ${tl<=15?"hot":""}" id="timer">${tl}s</span>`:""}<button class="btn primary ${armEnd?"armed":""}" data-act="endTurn" ${w?"disabled":""}>${w?"Waiting for the other player…":armEnd?"Tap again to end turn":"End turn"}</button></div>`}
 let armEnd=false,armT=null;
 
@@ -1237,7 +1260,8 @@ app.addEventListener("click",e=>{const el=e.target.closest("[data-act]");if(!el|
     case"askFunds":{const amt=+el.dataset.n,ex=myOrders.findIndex(x=>x.t==="dip"&&x.kind==="askFunds"&&x.target===id);if(ex>=0){const same=myOrders[ex].amount===amt;myOrders.splice(ex,1);if(same){saveDraft();render();break}}addOrder({t:"dip",kind:"askFunds",target:id,amount:amt});break}
     case"nukeAnnounce":{const ex=myOrders.findIndex(o=>o.t==="nukeAnnounce");if(ex>=0){myOrders.splice(ex,1);saveDraft();render()}else addOrder({t:"nukeAnnounce"});break}
     case"nukeToggle":addOrder({t:"nukeToggle",on:el.dataset.v==="1"});break;
-    case"polact":{const k=el.dataset.k,o={t:"pol",kind:k};if(k==="campaign")o.region=$("#campR")?.value;if(k==="rally")o.faction=$("#rallyF")?.value;addOrder(o);break}
+    case"polNone":{const ex=myOrders.findIndex(o=>o.t==="pol"&&o.kind==="none");if(ex>=0){myOrders.splice(ex,1);saveDraft();render()}else addOrder({t:"pol",kind:"none"});break}
+    case"polact":{myOrders=myOrders.filter(o=>!(o.t==="pol"&&o.kind==="none"));const k=el.dataset.k,o={t:"pol",kind:k};if(k==="campaign")o.region=$("#campR")?.value;if(k==="rally")o.faction=$("#rallyF")?.value;addOrder(o);break}
     case"confirmAtk":{const o=confirmAtk;confirmAtk=null;target=null;addOrder(o);break}
     case"cancelAtk":confirmAtk=null;render();break;
     case"jwBase":case"jwFunds":{const cur=myOrders.find(x=>x.t==="resp"&&x.id===+id);const o=cur&&cur.choice==="support"?{...cur}:{t:"resp",id:+id,from:el.dataset.from,choice:"support",basing:false,pct:0};
@@ -1270,7 +1294,7 @@ app.addEventListener("click",e=>{const el=e.target.closest("[data-act]");if(!el|
     case"spy":{const t=$("#spyT").value,m=$("#spyM").value;addOrder({t:"spy",target:t,mission:m});toast("Spy dispatched when the turn ends");break}
     case"savePol":{const b={};for(const k of ["troops","def","infra","prop"])b[k]=+$("#b-"+k).value;const tot=Object.values(b).reduce((a,x)=>a+x,0);if(tot>100){toast("Allocations can't exceed 100%");break}b.res=100-tot;polDraft=null;addOrder({t:"policy",tax:+$("#tax").value,budget:b});toast("Policy set for this term");break}
     case"recruit":{const k=+$("#rec").value;if(S.nations[myNat].cash-spendQueued()<k*COST.troop){toast("Not enough in the treasury");break}myOrders=myOrders.filter(x=>x.t!=="recruit");addOrder({t:"recruit",n:k,region:$("#recR").value});break}
-    case"endTurn":document.activeElement?.blur?.();actx();
+    case"endTurn":document.activeElement?.blur?.();actx();{const bl=endBlockers();if(bl.length){toast(bl[0]);armEnd=false;break}}
       if(!armEnd){armEnd=true;clearTimeout(armT);armT=setTimeout(()=>{armEnd=false;render()},3000);render();break}
       armEnd=false;clearTimeout(armT);if(mode==="solo")endTurnSolo();else submitOrders();break}});
 
