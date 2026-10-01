@@ -69,6 +69,11 @@ label{display:block;margin:10px 0 2px;font-weight:600}label select,label input[t
 .tile.adj.war rect{stroke:var(--war);stroke-width:3.5}
 .tile.sel.war rect{stroke:var(--war);stroke-width:4.5}
 .tile .rn.sm{font-size:9px}
+.board{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin:8px 0;background:var(--panel)}
+.board .bh{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:4px}
+.board .br{display:grid;grid-template-columns:1fr auto 2.2em;gap:8px;align-items:center;padding:3px 0 3px 8px;border-left:4px solid var(--nc);margin:2px 0}
+.board .br.me{font-weight:700}.board .br b{text-align:right}
+.final{text-align:left;margin:8px auto;max-width:340px}
 .tile.waste rect{fill:#3b3b3b;stroke:#d4b400;stroke-width:2;stroke-dasharray:3 3}.tile.waste text{fill:#d4b400}
 .poll{background:var(--panel);border-radius:8px;padding:8px 10px}.pollbar{height:10px;border-radius:5px;background:var(--war);overflow:hidden;position:relative}.pollbar>span{display:block;height:100%;background:var(--ally)}
 .pollbar::after{content:"";position:absolute;left:50%;top:-2px;bottom:-2px;width:2px;background:var(--ink)}
@@ -160,7 +165,14 @@ const GOVN={dem:"Democracy",mon:"Monarchy",dic:"Dictatorship"};
 const RELN={"-2":"War","-1":"Negative","0":"Neutral","1":"Positive","2":"Alliance"};
 const COST={troop:2,def:3,spy:8,infra:25,capital:20};
 const NEUTRAL_DEF=5,NEUTRAL_CAP_DEF=8,CEASEFIRE=4,STALE_TURN=25,ACTION_CAP=3,SPY_CAP=2;
-const ACTIONS=["move","attack","spy","airlift","nukeStrike"];const actW=o=>o.t==="airlift"?ACTION_CAP:1;
+const ACTIONS=["move","attack","spy","airlift","nukeStrike","airStrike"];
+/* LIGHTNING ROUND: 15 turns, score wins, fighting from turn 2, 1.5x income, military branches with tech tiers */
+const LT_TURNS=15,LT_CF=2,LT_INC=1.5,LT_CAP=3,MIL_RES=10,TIER_MAX=4,MIL_PRICE={air:4,navy:4,icp:6},BRANCHES=["inf","air","navy"];
+const BRN={inf:"Infantry",air:"Air force",navy:"Navy"},ABIL={inf:"Blitz",air:"Long range",navy:"Carriers"},UNITN={air:"plane",navy:"ship",icp:"interceptor"};
+const cf=S=>S?.opts?.lightning?LT_CF:CEASEFIRE,milOn=S=>!!S?.opts?.lightning;
+function mil(n){if(!n.mil)n.mil={air:0,navy:0,icp:0,t:{inf:1,air:1,navy:1},p:{inf:0,air:0,navy:0},f:{inf:false,air:false,navy:false}};return n.mil}
+const tierOf=(n,b)=>n?.mil?.t?.[b]||1,tierMult=(n,b)=>1+0.2*(tierOf(n,b)-1);
+const actW=(o,S,id)=>o.t==="airlift"?(S&&milOn(S)&&(S.nations[id]?.mil?.air||0)>0?2:ACTION_CAP):1;
 const MISSIONS={distrust:"Sow distrust in their alliance",intel:"Steal intel",sabotage:"Sabotage troops",economy:"Sabotage economy",unrest:"Stir unrest",rig:"Rig election"};
 const PERS=["warlord","merchant","schemer","turtle"];
 const BUDGET_PRESET={warlord:{troops:55,def:10,infra:10,prop:10,res:15},merchant:{troops:30,def:10,infra:30,prop:10,res:20},schemer:{troops:35,def:10,infra:10,prop:10,res:35},turtle:{troops:30,def:35,infra:15,prop:10,res:10}};
@@ -187,7 +199,7 @@ const maxTax=n=>n.gov==="dic"?70:50;
 function leader(S){let best=null,bc=-1;for(const n of alive(S)){const c=owned(S,n).length;if(c>bc){bc=c;best=n}}return best}
 
 /* seats: [{nat, human:uid|null, diff, pers}]  picks: {nat: regionId} */
-function newState(seats,picks,opts){
+function newState(seats,picks,opts){if(opts?.lightning)opts={...opts,politics:false,nukes:false};
   const S={alliances:[],nextAlliance:1,joins:[],opts:opts||{},turn:1,regions:{},nations:{},rel:{},offers:[],log:[],hold:{},winner:null,over:false,nextOffer:1,caps:seats.map(s=>NAT[s.nat].home)};
   for(const k of [...BASE_REG,...extrasFor(seats.length)])S.regions[k]={owner:null,troops:HOMES.includes(k)?NEUTRAL_CAP_DEF:NEUTRAL_DEF,def:0,pop:REG[k].pop,infra:0};setMap(S);
   for(const s of seats){const N=NAT[s.nat],T=TIER[N.tier];
@@ -201,7 +213,7 @@ function newState(seats,picks,opts){
   for(const id of ids){const n=S.nations[id];if(pol(S))initPolitics(n);if(nukes(S))nk(n)}
   if(pol(S))for(const id of ids)makeDemand(S,id);
   for(const id of ids)if(!S.nations[id].human)botPolicy(S,id);
-  log(S,"all",`Ceasefire: nations cannot attack each other before turn ${CEASEFIRE}. Neutral regions are fair game from turn 1.`);
+  log(S,"all",`Ceasefire: nations cannot attack each other before turn ${cf(S)}. Neutral regions are fair game from turn 1.`);
   return S}
 
 function pickChoices(taken,nat){return BASE_ADJ[NAT[nat].home].filter(r=>!HOMES.includes(r)&&!taken.includes(r))}
@@ -214,12 +226,34 @@ function visible(S,me){const v=new Set(),full=new Set();const n=S.nations[me];if
 
 function income(S,id){const n=S.nations[id];let inc=0;
   for(const r of owned(S,id)){const g=S.regions[r];inc+=g.pop*n.tax/100*0.1*(1+0.15*g.infra)}
-  let trade=0;if(!(n.tradeBlock>S.turn))for(const o of alive(S))if(o!==id&&rel(S,id,o)?.trade)trade+=n.gov==="dem"?0.15:0.10;for(const o of alive(S))if(allied(S,id,o))trade+=0.05;
-  inc*=1+trade;if(n.unrest>50)inc*=1-(n.unrest-50)/100;return Math.max(0,inc)}
+  let trade=0;if(!(n.tradeBlock>S.turn)&&!blockaded(S,id))for(const o of alive(S))if(o!==id&&rel(S,id,o)?.trade)trade+=n.gov==="dem"?0.15:0.10;for(const o of alive(S))if(allied(S,id,o))trade+=0.05;
+  inc*=1+trade;if(n.unrest>50)inc*=1-(n.unrest-50)/100;return Math.max(0,inc)*(S.opts?.lightning?LT_INC:1)}
+function blockaded(S,id){if(!milOn(S))return null;const my=S.nations[id]?.mil?.navy||0;return alive(S).find(o=>o!==id&&atWar(S,id,o)&&(S.nations[o].mil?.navy||0)>my)||null}
+const SEASET=new Set([...SEA,...XSEA].flatMap(([a,b])=>[a+"|"+b,b+"|"+a]));const isSea=(a,b)=>SEASET.has(a+"|"+b);
+const LANDSET=new Set([...LAND,...XLAND].flatMap(([a,b])=>[a+"|"+b,b+"|"+a]));
+function airRange(S,id){const n=S.nations[id],R=2+(tierOf(n,"air")>=3?1:0)+(tierOf(n,"navy")>=3?1:0),carriers=tierOf(n,"navy")>=3,d={},q=[];
+  for(const r of owned(S,id)){d[r]=0;q.push(r)}while(q.length){const r=q.shift();if(d[r]>=R)continue;for(const a of ADJ[r])if(d[a]===undefined&&(carriers||LANDSET.has(r+"|"+a))){d[a]=d[r]+1;q.push(a)}}
+  return new Set(Object.keys(d).filter(r=>d[r]>0))}
+function airStrike(S,id,r,k){const n=S.nations[id],M=n.mil;if(!milOn(S)||!M||!M.air)return;const g=S.regions[r];if(!g||g.owner===id||g.waste>S.turn||!airRange(S,id).has(r))return;const tw=g.owner;
+  if(tw){if(allied(S,id,tw))return;const R=rel(S,id,tw);if(!R||R.truce>0||S.turn<cf(S))return;if(R.level>-2&&!declareWar(S,id,tw))return}
+  k=Math.min(k||M.air,M.air);if(k<=0)return;const icp=tw?(S.nations[tw].mil?.icp||0):0,p=Math.min(1,0.25*icp);let shot=0;for(let i=0;i<k;i++)if(chance(p))shot++;M.air-=shot;
+  let kill=Math.round((k-shot)*tierMult(n,"air"));const t=Math.min(g.troops,kill);g.troops-=t;kill-=t;const d=Math.min(g.def,kill);g.def-=d;if(tw){casualty(S,tw,t+d);g.hit=S.turn}S.lastAttack=S.turn;
+  log(S,"all",`${NAT[id].name} sent ${k} plane${k>1?"s":""} against ${REG[r].n}${tw?` (${NAT[tw].name})`:""}.${shot?` ${shot} ${shot>1?"were":"was"} shot down.`:""} ${t+d} defender${t+d===1?" was":"s were"} killed.`)}
+function milTurn(S,id){if(!milOn(S))return;const n=S.nations[id],M=mil(n);
+  for(const b of BRANCHES){if(M.t[b]>=TIER_MAX){M.f[b]=false;continue}let fund=false;if(M.f[b]){fund=spend(S,id,MIL_RES);if(!fund){M.f[b]=false;log(S,id,`${BRN[b]} research paused: not enough money.`)}}
+    M.p[b]+=fund?2:1;if(M.p[b]>=4){M.t[b]++;M.p[b]=0;log(S,id,`${BRN[b]} reached tier ${M.t[b]}${M.t[b]===3?`: ${ABIL[b]} unlocked`:""}.`);if(M.t[b]>=TIER_MAX)M.f[b]=false}}}
+function expandBlitz(S,id,list){if(!milOn(S)||tierOf(S.nations[id],"inf")<3)return list;const out=[];for(const o of list){if(o.t==="attack"&&o.to2&&o.to2!==o.to){const a=Math.ceil((o.n|0)/2);out.push({...o,n:a,to2:undefined},{...o,to:o.to2,n:(o.n|0)-a,to2:undefined})}else out.push(o)}return out}
+const ltSoldiers=(S,id)=>Object.values(S.regions).reduce((t,g)=>t+(g.owner===id?g.troops:0)+(g.guest?.nat===id?g.guest.n:0),0);
+const ltScore=(S,id)=>owned(S,id).length+LT_CAP*S.caps.filter(c=>S.regions[c].owner===id).length;
+function ltBoard(S){return alive(S).map(id=>({id,score:ltScore(S,id),regions:owned(S,id).length,caps:S.caps.filter(c=>S.regions[c].owner===id).length,soldiers:ltSoldiers(S,id)})).sort((a,b)=>b.score-a.score||b.soldiers-a.soldiers)}
 
 function dice(k){return Array.from({length:k},()=>1+rnd(6)).sort((a,b)=>b-a)}
 function battle(att,def,bonus,tieAtt){while(att>0&&def>0){const A=dice(Math.min(3,att)),D=dice(Math.min(2,def));if(bonus)D[0]+=1;for(let i=0;i<Math.min(A.length,D.length);i++){if(A[i]>D[i]||(tieAtt&&A[i]===D[i]))def--;else att--}}return{att,def}}
 
+function milBattle(S,A,tw,D0,bonus,tie){const an=S.nations[A.by];let mA=tierMult(an,"inf"),mD=tw?tierMult(S.nations[tw],"inf"):1;
+  if(isSea(A.from,A.to)){const up=Math.min(0.5,0.1*(an.mil?.navy||0)*tierMult(an,"navy")),dn=tw?S.nations[tw]:null,down=dn?Math.min(0.5,0.1*(dn.mil?.navy||0)*tierMult(dn,"navy")):0;mA*=1+up-down}
+  const r=battle(Math.max(1,Math.round(A.n*mA)),D0>0?Math.max(1,Math.round(D0*mD)):0,bonus,tie);
+  return{att:r.att>0?Math.max(1,Math.min(A.n,Math.round(r.att/mA))):0,def:r.def>0?Math.max(1,Math.min(D0,Math.round(r.def/mD))):0}}
 function winChance(att,def,bonus,n=400){let w=0;for(let i=0;i<n;i++)if(battle(att,def,bonus).def<=0)w++;return w/n}
 function setLevel(S,a,b,l){const R=rel(S,a,b);if(!R)return;const was=R.level;R.level=l;R.prog=0;R.quiet=0;if(l<0)R.trade=false;if(l!==2)R.allySince=null;if(l===2&&was!==2)R.allySince=S.turn;
   if(was===2&&l!==2&&!S._allyGuard&&S.alliances){const keep=l;S._allyGuard=true;R.level=was;S._allyGuard=false;leaveAlliance(S,a);if(rel(S,a,b).level!==keep&&keep!==-1)rel(S,a,b).level=keep;}
@@ -231,7 +265,7 @@ const hasGrievance=(S,a,b)=>{const t=rel(S,a,b)?.griev?.[a];return t!=null&&S.tu
 function addGriev(S,a,b){const R=rel(S,a,b);if(!R)return;R.griev=R.griev||{};R.griev[a]=S.turn;R.sumUsed=R.sumUsed||{};R.sumUsed[a]=false}
 const canSummon=(S,a,b)=>{const R=rel(S,a,b);return !!R&&R.level>-2&&R.level<2&&hasGrievance(S,a,b)&&!R.sumUsed?.[a]};
 const canAlly=R=>R&&R.level===1&&!!R.trade;
-const canDeclare=(S,a,b)=>{const R=rel(S,a,b);return !!R&&R.level!==-2&&R.level!==2&&R.truce<=0&&S.turn>=CEASEFIRE};
+const canDeclare=(S,a,b)=>{const R=rel(S,a,b);return !!R&&R.level!==-2&&R.level!==2&&R.truce<=0&&S.turn>=cf(S)};
 function summon(S,a,b,why){const R=rel(S,a,b);if(!R||R.level===-2||R.level===2)return;addGriev(S,a,b);R.griev[a]=S.turn-2;R.sumUsed[a]=true;S.nations[b].tradeBlock=S.turn+2;if(R.level>-1)setLevel(S,a,b,R.level-1);
   log(S,"all",`${NAT[a].name} summoned ${NAT[b].name}'s ambassador${why?" over "+why:""}. ${NAT[b].name} loses its trade income for 2 turns.`)}
 function declareWar(S,a,b,why,force){const R=rel(S,a,b);if(!R||R.level===-2)return false;if(!force&&!canDeclare(S,a,b))return false;
@@ -295,7 +329,7 @@ function spyCaught(S,from,to,mission){const R=rel(S,from,to),verb=MISSION_VERB[m
   if(R.level===2){if(chance(0.5)){setLevel(S,from,to,-1);log(S,"all",`The ${NAT[from].name}–${NAT[to].name} alliance collapsed over a spy scandal.`)}else log(S,"all",`The ${NAT[from].name}–${NAT[to].name} alliance survived a spy scandal.`);return}
   if(R.level===1){summon(S,to,from,"a spy scandal");return}
   if(S.nations[to].human){offer(S,from,to,"spyCaught",{mission})}
-  else{const ok=strength(S,to)>strength(S,from)*1.1&&S.turn>=CEASEFIRE&&chance(0.5);if(ok)declareWar(S,to,from,"spy caught",true);else summon(S,to,from,"a spy scandal")}}
+  else{const ok=strength(S,to)>strength(S,from)*1.1&&S.turn>=cf(S)&&chance(0.5);if(ok)declareWar(S,to,from,"spy caught",true);else summon(S,to,from,"a spy scandal")}}
 function runSpy(S,from,o){if(o.mission==="distrust"&&o.alliance){const g=(S.alliances||[]).find(k=>k.id===o.alliance);if(!g||g.members.includes(from))return;o.target=pick(g.members.filter(m=>S.nations[m]?.alive))||o.target}const n=S.nations[from],t=S.nations[o.target];if(!t||!t.alive||o.target===from)return;if(!spend(S,from,COST.spy))return;
   if(!chance(0.35)){if(chance(1/3))spyCaught(S,from,o.target,o.mission);else log(S,from,`${MISSIONS[o.mission]} in ${NAT[o.target].name} failed. Your spy got away.`);return}
   if(o.mission==="distrust"){const g=o.alliance?(S.alliances||[]).find(k=>k.id===o.alliance):allianceOf(S,o.target);if(g&&!g.members.includes(from)){dissolveAlliance(S,g,"mutual suspicion");log(S,from,"Your agents sowed enough distrust to break the alliance.")}else log(S,from,`${NAT[o.target].name} has no alliance to break.`);return}
@@ -391,7 +425,7 @@ function tributeOdds(S,me,them,o){const ms=Math.max(1,strength(S,me)),r=strength
 /* chance any nation caves to a nuclear-backed demand: 33%, +10% per threat followed through, +5% per recent test, max 75% */
 function caveOdds(S,id){const N=S.nations[id]?.nuke||{};let p=1/3+0.1*(N.follow||0)+0.05*(N.tests||[]).filter(t=>S.turn-t<3).length;return Math.min(0.75,p)}
 function demandWhat(o){return o.kind==="nukeStop"?"end its nuclear program":o.region?`cede ${REG[o.region].n}`:`pay ${o.pct||20}% of its treasury`}
-function botTribRefused(S,a,b){applyOffer(S,{from:a,to:b,kind:"tribRefused"},strength(S,a)>strength(S,b)*1.3&&S.turn>=CEASEFIRE)}
+function botTribRefused(S,a,b){applyOffer(S,{from:a,to:b,kind:"tribRefused"},strength(S,a)>strength(S,b)*1.3&&S.turn>=cf(S))}
 function distToBorder(S,id){const d={};const q=[];for(const r of owned(S,id))if(ADJ[r].some(a=>{const o=S.regions[a].owner;return o!==id&&!(o&&allied(S,id,o))})){d[r]=0;q.push(r)}
   while(q.length){const r=q.shift();for(const a of ADJ[r])if(S.regions[a].owner===id&&d[a]===undefined){d[a]=d[r]+1;q.push(a)}}return d}
 function botOrders(S,id){const n=S.nations[id],O=[],L=leader(S),D=n.diff,P=n.pers;
@@ -403,7 +437,7 @@ function botOrders(S,id){const n=S.nations[id],O=[],L=leader(S),D=n.diff,P=n.per
     if(canAlly(R)&&!allyVeto(S,o,id)&&D!=="easy"&&canPair(S,id,o)&&chance(S.nations[o].human?0.2:0.12))O.push({t:"dip",kind:"ally",target:o});
     if(R.level>=0&&!R.trade&&chance(P==="merchant"?0.5:0.15))O.push({t:"dip",kind:"trade",target:o});
     if(R.level===0&&n.cash>60&&P==="merchant"&&chance(0.15))O.push({t:"dip",kind:"gift",target:o,amount:10});
-    if(R.level<2&&R.level>-2&&my>os*1.5&&hasGrievance(S,id,o)&&S.turn>=CEASEFIRE&&chance(0.25)){const d={t:"dip",kind:"tribute",target:o,pct:pick(TRIB_PCTS)};if(hasPublicBomb(S,id)&&chance(0.5))d.threat=true;O.push(d)}}
+    if(R.level<2&&R.level>-2&&my>os*1.5&&hasGrievance(S,id,o)&&S.turn>=cf(S)&&chance(0.25)){const d={t:"dip",kind:"tribute",target:o,pct:pick(TRIB_PCTS)};if(hasPublicBomb(S,id)&&chance(0.5))d.threat=true;O.push(d)}}
   if(n.cash>70)O.push({t:"recruit",n:Math.floor((n.cash-40)/COST.troop)});
   const spyRate={easy:0.05,normal:0.2,hard:0.35}[D]*(P==="schemer"?2:1);
   if(n.cash>30&&chance(spyRate)){const tg=L&&L!==id?L:pick(alive(S).filter(x=>x!==id));if(tg){const m=pick(["intel","sabotage","economy","unrest",S.nations[tg].gov==="dem"?"rig":"unrest"]);O.push({t:"spy",target:tg,mission:m})}}
@@ -412,7 +446,7 @@ function botOrders(S,id){const n=S.nations[id],O=[],L=leader(S),D=n.diff,P=n.per
     let best=null,bs=-1e9;
     for(const a of ADJ[r]){const t=S.regions[a];if(t.owner===id)continue;const tw=t.owner;
       if(t.waste>S.turn)continue;
-      if(tw){const R=rel(S,id,tw);if(R.level===2||R.truce>0||S.turn<CEASEFIRE)continue;if(hasPublicBomb(S,tw)&&!hasPublicBomb(S,id)&&chance(0.8))continue;
+      if(tw){const R=rel(S,id,tw);if(R.level===2||R.truce>0||S.turn<cf(S))continue;if(hasPublicBomb(S,tw)&&!hasPublicBomb(S,id)&&chance(0.8))continue;
         if(R.level>-2){const os=strength(S,tw),base=(P==="warlord"||D==="hard")&&P!=="turtle",dom=S.turn>=10&&my>os*1.5,late=S.turn>=18&&my>os*(P==="turtle"?1.5:1);
           const coal=my+alliesOf(S,id).filter(x=>x!==tw).reduce((t,x)=>t+strength(S,x),0),stale=S.turn>=25&&coal>os*1.2;
           const ok=stale||(R.level<=0?(base||dom||late):((dom&&S.turn>=15)||(late&&my>os*2)));if(!ok)continue;
@@ -425,7 +459,7 @@ function botOrders(S,id){const n=S.nations[id],O=[],L=leader(S),D=n.diff,P=n.per
   for(const r of owned(S,id)){if(used[r])continue;const g=S.regions[r];if(dist[r]===undefined&&g.troops>1){const nx=ADJ[r].filter(a=>S.regions[a].owner===id);if(nx.length)O.push({t:"move",from:r,to:pick(nx),n:g.troops-1});continue}
     if(dist[r]>0&&g.troops>1){const nx=ADJ[r].filter(a=>S.regions[a].owner===id&&dist[a]<dist[r]);if(nx.length)O.push({t:"move",from:r,to:pick(nx),n:g.troops-1})}}
   {const b=owned(S,id).filter(r=>dist[r]===0).sort((x,y)=>(threat(S,id,y)+ADJ[y].filter(a=>!S.regions[a].owner).length*3)-(threat(S,id,x)+ADJ[x].filter(a=>!S.regions[a].owner).length*3))[0];if(b&&(!n.defFocus||S.regions[n.defFocus]?.owner!==id||chance(0.3)))n.defFocus=b;if(!n.defFocus)n.defFocus=n.capital}
-  O.push(...botMissiles(S,id));if(pol(S))O.push(...botPolitics(S,id));if(nukes(S)){O.push(...botNukes(S,id));O.push(...botNukeDiplo(S,id))}
+  O.unshift(...botMilitary(S,id));O.push(...botMissiles(S,id));if(pol(S))O.push(...botPolitics(S,id));if(nukes(S)){O.push(...botNukes(S,id));O.push(...botNukeDiplo(S,id))}
   const act=O.filter(o=>ACTIONS.includes(o.t)),rest=O.filter(o=>!ACTIONS.includes(o.t));const pri={nukeStrike:-1,attack:0,spy:1,move:2};act.sort((x,y)=>pri[x.t]-pri[y.t]);
   return [...rest,...act.slice(0,ACTION_CAP)]}
 function threat(S,id,r){return ADJ[r].reduce((t,a)=>{const g=S.regions[a];return t+(g.owner&&g.owner!==id&&!allied(S,id,g.owner)?g.troops:0)},0)}
@@ -436,7 +470,7 @@ function resolve(S0,humanOrders){const S=JSON.parse(JSON.stringify(S0));setMap(S
   for(const id of ids){const n=S.nations[id];n.lostThisTurn=0;n.casT=0;n.capAttacked=false;let list=n.human?(humanOrders[id]||[]):botOrders(S,id);let acts=0;const spies={};
     if(n.human&&n.deposed&&isTermEnd(S)&&pol(S)){const reg=botPolitics({...S,nations:{...S.nations,[id]:{...n,deposed:null}}},id).filter(o=>o.kind==="reward"||o.kind==="purge");for(const o of reg){const c=POL_COST[o.kind]||0;if(!c||spend(S,id,c)){if(o.kind==="reward")n.loyalty=clamp(n.loyalty+12,0,100);if(o.kind==="purge"){n.loyalty=clamp(n.loyalty+15,0,100);n.unrest=clamp(n.unrest+8,0,100)}log(S,"all",`${NAT[id].name}'s regime ${o.kind==="reward"?"rewarded its backers":"carried out a purge"}.`)}}}
     const pk2=polTurnKind(S,n);let pa=0;
-    list=list.filter(o=>{if(o.t==="resp"&&o.air){if(o.choice!=="accept")return true;acts+=1;return acts<=ACTION_CAP}if(o.t==="pol")return !!pk2&&++pa<=ACTION_CAP;if(pk2&&ACTIONS.includes(o.t))return false;if(!ACTIONS.includes(o.t))return true;if(o.t==="spy"){spies[o.target]=(spies[o.target]||0)+1;if(spies[o.target]>SPY_CAP)return false}acts+=actW(o);return acts<=ACTION_CAP});orders[id]=list}
+    list=list.filter(o=>{if(o.t==="resp"&&o.air){if(o.choice!=="accept")return true;acts+=1;return acts<=ACTION_CAP}if(o.t==="pol")return !!pk2&&++pa<=ACTION_CAP;if(pk2&&ACTIONS.includes(o.t))return false;if(!ACTIONS.includes(o.t))return true;if(o.t==="spy"){spies[o.target]=(spies[o.target]||0)+1;if(spies[o.target]>SPY_CAP)return false}acts+=actW(o,S,id);return acts<=ACTION_CAP});orders[id]=list}
   for(const id of ids)for(const o of orders[id]){if(!S.nations[id].alive)break;if(o.t==="surrender"&&alive(S).some(x=>atWar(S,id,x))){eliminate(S,id,"surrendered");log(S,"all",`${NAT[id].name} surrendered. Its land is now neutral.`);if(o.after)S.nations[id].after=o.after}
     if(o.t==="sacrifice")trySacrifice(S,id,o.target,o.after)}
   for(const id of ids)if(!S.nations[id].alive)orders[id]=[];
@@ -453,6 +487,8 @@ function resolve(S0,humanOrders){const S=JSON.parse(JSON.stringify(S0));setMap(S
       if(o.t==="nukeToggle"&&nukes(S)&&o.on&&outOfPower(S.nations[id])){log(S,id,"You can't run a nuclear program while out of power.");continue}
       if(o.t==="nukeToggle"&&nukes(S)&&o.on&&inNPT(S,id)){log(S,id,"Treaty members can't run a nuclear program. Withdraw from the treaty first.");continue}
       if(o.t==="nukeToggle"&&nukes(S)){const N=nk(S.nations[id]);if(!N.done){N.on=!!o.on;log(S,id,N.on?"Nuclear program funded.":"Nuclear program paused.")}}
+      if(o.t==="milFund"&&milOn(S)&&BRANCHES.includes(o.b)){const M=mil(S.nations[id]);if(M.t[o.b]<TIER_MAX){M.f[o.b]=!!o.on;log(S,id,`${BRN[o.b]} research ${o.on?`funded (${MIL_RES} a turn)`:"stopped"}.`)}}
+      if(o.t==="milBuy"&&milOn(S)&&MIL_PRICE[o.kind]){const M=mil(S.nations[id]),k=Math.min(o.n|0,Math.floor(S.nations[id].cash/MIL_PRICE[o.kind]));if(k>0){S.nations[id].cash-=k*MIL_PRICE[o.kind];M[o.kind]+=k;log(S,id,`Built ${k} ${UNITN[o.kind]}${k>1?"s":""}. You have ${M[o.kind]}.`)}}
       if(o.t==="mslToggle"&&rogues(S).length){const M=msl(S.nations[id]);if(!M.done){M.on=!!o.on;log(S,id,M.on?`Missile research funded (${MSL_RES} a turn).`:"Missile research paused.")}}
       if(o.t==="mslBuy"&&rogues(S).length){const M=msl(S.nations[id]);if(M.done){const k=Math.min(o.n|0,Math.floor(S.nations[id].cash/MSL_COST));if(k>0){S.nations[id].cash-=k*MSL_COST;M.n+=k;log(S,id,`Built ${k} missile${k>1?"s":""}. You have ${M.n}.`)}}}
       if(o.t==="nukeBuild"&&nukes(S)){const N=nk(S.nations[id]);if(N.done){N.build=!!o.on;if(N.build)N.lastBuild=S.turn;log(S,id,N.build?`Bomb production resumed. Next bomb in ${NUKE_EVERY} turns.`:"Bomb production stopped.")}}
@@ -497,13 +533,16 @@ function resolve(S0,humanOrders){const S=JSON.parse(JSON.stringify(S0));setMap(S
   // attacks
   const atks=[];
   for(const id of ids)for(const o of orders[id])if(o.t==="missile")fireMissiles(S,id,o.region,o.n|0);
+  for(const id of ids)for(const o of orders[id])if(o.t==="airStrike")airStrike(S,id,o.region,o.n|0);
   for(const id of ids)for(const o of orders[id])if(o.t==="nukeStrike"){const b=nk(S.nations[id]).bombs;nukeStrike(S,id,o.region);if(nk(S.nations[id]).bombs<b)S.lastAttack=S.turn}
-  for(const id of ids)for(const o of orders[id]){if(o.t!=="attack")continue;const a=S.regions[o.from],b=S.regions[o.to];if(!a||!b||b.owner===id||!ADJ[o.from].includes(o.to)||srcFree(a,id)<=0||b.waste>S.turn)continue;
-    const tw=b.owner;if(tw){const R=rel(S,id,tw);if(R.level===2||R.truce>0||S.turn<CEASEFIRE)continue;}
+  for(const id of ids)for(const o of expandBlitz(S,id,orders[id])){if(o.t!=="attack")continue;const a=S.regions[o.from],b=S.regions[o.to];if(!a||!b||b.owner===id||!ADJ[o.from].includes(o.to)||srcFree(a,id)<=0||b.waste>S.turn)continue;
+    const tw=b.owner;if(tw){const R=rel(S,id,tw);if(R.level===2||R.truce>0||S.turn<cf(S))continue;}
     const k=Math.min(o.n|0,srcFree(a,id));if(k<=0)continue;take(a,id,k);atks.push({by:id,from:o.from,to:o.to,n:k})}
   if(atks.length)S.lastAttack=S.turn;
   for(let i=0;i<atks.length;i++)for(let j=i+1;j<atks.length;j++){const x=atks[i],y=atks[j];if(x.n>0&&y.n>0&&x.from===y.to&&x.to===y.from){
-    const x0=x.n,y0=y.n,flip=chance(0.5),res=flip?battle(x.n,y.n,false):battle(y.n,x.n,false);if(flip){x.n=res.att;y.n=res.def}else{y.n=res.att;x.n=res.def}casualty(S,x.by,x0-x.n);casualty(S,y.by,y0-y.n);
+    const x0=x.n,y0=y.n,flip=chance(0.5),mx=milOn(S)?tierMult(S.nations[x.by],"inf"):1,my=milOn(S)?tierMult(S.nations[y.by],"inf"):1;
+    const sc=(a,ma,d,md)=>{const r=battle(Math.round(a*ma),Math.round(d*md),false);return{att:r.att>0?Math.max(1,Math.min(a,Math.round(r.att/ma))):0,def:r.def>0?Math.max(1,Math.min(d,Math.round(r.def/md))):0}};
+    const res=flip?sc(x.n,mx,y.n,my):sc(y.n,my,x.n,mx);if(flip){x.n=res.att;y.n=res.def}else{y.n=res.att;x.n=res.def}casualty(S,x.by,x0-x.n);casualty(S,y.by,y0-y.n);
     log(S,"all",`${NAT[x.by].name} and ${NAT[y.by].name} armies clashed between ${REG[x.from].n} and ${REG[x.to].n}.`)}}
   const own0={};for(const k in S.regions)own0[k]=S.regions[k].owner;
   for(const A of shuffle(atks)){if(A.n<=0)continue;const b=S.regions[A.to],tw=b.owner;
@@ -512,7 +551,7 @@ function resolve(S0,humanOrders){const S=JSON.parse(JSON.stringify(S0));setMap(S
     if(tw){const R=rel(S,A.by,tw);if(R.level===2||R.truce>0||(R.level>-2&&!declareWar(S,A.by,tw))){const f=S.regions[A.from];if(f.owner===A.by)f.troops+=A.n;else if(f.guest?.nat===A.by)f.guest.n+=A.n;continue}R.quiet=0}
     if(tw&&S.nations[tw].capital===A.to)S.nations[tw].capAttacked=true;b.hit=S.turn;
     const bonus=tw&&NAT[tw].tier==="weak"&&S.nations[tw].homeRegions.includes(A.to);
-    const gn=b.guest&&b.guest.nat!==A.by?b.guest.n:0;A.def0=b.troops+b.def+gn;const Rd=tw?rel(S,A.by,tw):null,tie=!!(Rd&&Rd.declaredBy===A.by&&Rd.declaredTurn===S.turn);const res=battle(A.n,b.troops+b.def+gn,bonus,tie);let dl=b.troops+b.def+gn-res.def;const tl=Math.min(b.troops,dl);b.troops-=tl;dl-=tl;
+    const gn=b.guest&&b.guest.nat!==A.by?b.guest.n:0;A.def0=b.troops+b.def+gn;const Rd=tw?rel(S,A.by,tw):null,tie=!!(Rd&&Rd.declaredBy===A.by&&Rd.declaredTurn===S.turn);const res=milOn(S)?milBattle(S,A,tw,b.troops+b.def+gn,bonus,tie):battle(A.n,b.troops+b.def+gn,bonus,tie);let dl=b.troops+b.def+gn-res.def;const tl=Math.min(b.troops,dl);b.troops-=tl;dl-=tl;
     let gl=0;const gnat=b.guest?.nat;if(gn){gl=Math.min(b.guest.n,dl);b.guest.n-=gl;dl-=gl;if(b.guest.n<=0)b.guest=null}b.def-=dl;
     casualty(S,A.by,A.n-res.att);if(tw)casualty(S,tw,A.def0-res.def-gl);if(gl)casualty(S,gnat,gl);
     {const an=S.nations[A.by];if(an.pr)an.pr.cas+=A.n-res.att;if(tw&&S.nations[tw].pr)S.nations[tw].pr.cas+=A.def0-res.def}
@@ -524,6 +563,7 @@ function resolve(S0,humanOrders){const S=JSON.parse(JSON.stringify(S0));setMap(S
   // economy
   for(const id of alive(S)){const n=S.nations[id];if(!n.alive)continue;if(n.forced>0){const F=pol(S)?(PARTY_POLICY[n.govParty]||OPP_POLICY):FORCED;n.tax=F.tax;n.budget={...F.budget}}
     {const M=n.msl;if(M&&M.on&&!M.done){if(spend(S,id,MSL_RES)){M.res++;if(M.res>=MSL_TURNS){M.done=true;M.on=false;log(S,id,`Your ballistic missiles are ready. Each costs ${MSL_COST} to build.`)}}else{M.on=false;log(S,id,"Missile research paused: not enough money.")}}}
+    milTurn(S,id);
     let inc=income(S,id);if(nukes(S)){inc=sanctionHit(S,id,inc);inc=nukeEconomy(S,id,inc);nukeStockpile(S,id);if(S.sanctions?.[id]&&!knownBombs(S,id)&&!knownProgram(S,id))delete S.sanctions[id]}n.cash+=inc*n.budget.res/100;if(nukes(S)){nukeUpkeep(S,id);nukeWorldTurn(S,id)}
     const cap=n.capital&&S.regions[n.capital]?.owner===id?n.capital:owned(S,id)[0];if(!cap)continue;
     const draft=(k,to,defense)=>{let made=0;for(let i=0;i<k;i++){const src=S.regions[to].pop>5?to:owned(S,id).sort((a,b)=>S.regions[b].pop-S.regions[a].pop)[0];if(!src||S.regions[src].pop<=5)break;S.regions[src].pop--;if(defense)S.regions[to].def++;else S.regions[to].troops++;made++}return made};
@@ -570,7 +610,9 @@ function resolve(S0,humanOrders){const S=JSON.parse(JSON.stringify(S0));setMap(S
   const holdsAll=set=>S.caps.filter(c=>set.includes(S.regions[c].owner)).length>=capsNeeded(S);const nh={};
   for(const id of alive(S))if(holdsAll([id]))nh[id]=(S.hold[id]||0)+1;
   for(const g of S.alliances||[]){const m=g.members.filter(x=>S.nations[x]?.alive);if(m.length>=2&&S.turn-g.since>=10&&holdsAll(m)){const k=m.join("+");nh[k]=(S.hold[k]||0)+1}}
-  S.hold=nh;for(const k in nh)if(nh[k]>=3){S.winner=k.split("+");S.over=true;S.winReason=(k.includes("+")?"held ":"held ")+(capsNeeded(S)===S.caps.length?"every starting capital":`${capsNeeded(S)} of the ${S.caps.length} starting capitals`)+(k.includes("+")?" together":"")+" for 3 turns";log(S,"all",`${S.winner.map(x=>NAT[x].name).join(" and ")} ${S.winner.length>1?"control":"controls"} every capital. Victory!`)}
+  S.hold=nh;if(!S.opts?.lightning)for(const k in nh)if(nh[k]>=3){S.winner=k.split("+");S.over=true;S.winReason=(k.includes("+")?"held ":"held ")+(capsNeeded(S)===S.caps.length?"every starting capital":`${capsNeeded(S)} of the ${S.caps.length} starting capitals`)+(k.includes("+")?" together":"")+" for 3 turns";log(S,"all",`${S.winner.map(x=>NAT[x].name).join(" and ")} ${S.winner.length>1?"control":"controls"} every capital. Victory!`)}
+  if(S.opts?.lightning&&!S.over&&S.turn>=LT_TURNS&&alive(S).length){const B=ltBoard(S),top=B.filter(x=>x.score===B[0].score&&x.soldiers===B[0].soldiers);S.final=B;S.over=true;S.winner=top.map(x=>x.id);
+    S.winReason=`highest score after ${LT_TURNS} turns${B.length>1&&B[1].score===B[0].score&&top.length===1?", most soldiers broke the tie":""}`;log(S,"all",`Time! ${top.map(x=>NAT[x.id].name).join(" and ")} ${top.length>1?"share":"takes"} the lightning round with ${B[0].score} points.`)}
   const humans=Object.values(S.nations).filter(n=>n.human);
   if(!S.over&&humans.length&&humans.every(n=>!n.alive)&&!humans.some(n=>n.after==="watch")){S.over=true;S.winner=alive(S).length===1?alive(S):[];S.winReason=humans.some(n=>n.sacrificed)?"you sacrificed your nation":"your nation was eliminated"}
   if(!S.over&&alive(S).length===1){S.over=true;S.winner=alive(S);S.winReason="every other nation was eliminated"}
@@ -723,7 +765,7 @@ function nukeEconomy(S,id,inc){const n=S.nations[id],N=nk(n);if(!nukes(S)||N.don
   return inc*(100-NUKE_FUND)/100}
 function nukeStockpile(S,id){const N=nk(S.nations[id]);if(N.done&&(N.bombs>=NUKE_MAX||N.build===false)){N.lastBuild=S.turn;return}if(N.done&&N.bombs<NUKE_MAX&&S.turn-N.lastBuild>=NUKE_EVERY){N.bombs++;N.lastBuild=S.turn;log(S,id,`Your stockpile grew to ${N.bombs} bomb${N.bombs>1?"s":""}.`)}}
 const wasted=(S,r)=>(S.regions[r].waste||0)>S.turn;
-function nukeStrike(S,id,r){const n=S.nations[id],N=nk(n),g=S.regions[r];if(!nukes(S)||N.bombs<=0||!g||wasted(S,r)||g.owner===id||S.turn<CEASEFIRE)return;
+function nukeStrike(S,id,r){const n=S.nations[id],N=nk(n),g=S.regions[r];if(!nukes(S)||N.bombs<=0||!g||wasted(S,r)||g.owner===id||S.turn<cf(S))return;
   const tw=g.owner;if(tw&&allied(S,id,tw))return;const vsRogue=tw&&isRogue(S,tw);if(!N.public){N.public=true;goesPublic(S,id);natBomb(S,id);if(!vsRogue)sanctionPrompt(S,id)}N.bombs--;
   if(tw&&!atWar(S,id,tw))declareWar(S,id,tw,"nuclear strike",true);
   if(tw)casualty(S,tw,g.troops+g.def);
@@ -738,7 +780,7 @@ function nukeStrike(S,id,r){const n=S.nations[id],N=nk(n),g=S.regions[r];if(!nuk
 function botNukes(S,id){const n=S.nations[id],N=nk(n),O=[];if(!nukes(S))return O;
   if(!N.done&&!N.on&&S.turn>=8&&isPolicyTurn(S)&&!inNPT(S,id)&&chance(["warlord","schemer"].includes(n.pers)?0.4:0.2))O.push({t:"nukeToggle",on:true});
   if(N.bombs>1){const rt=rogues(S).filter(x=>S.nations[x].power).flatMap(x=>owned(S,x)).filter(r=>!wasted(S,r)).sort((a,b)=>S.regions[b].troops-S.regions[a].troops)[0];if(rt&&chance(0.15)){O.push({t:"nukeStrike",region:rt});return O}}
-  if(N.bombs>0&&S.turn>=CEASEFIRE){const my=strength(S,id);for(const e of alive(S)){if(e===id||!atWar(S,id,e))continue;
+  if(N.bombs>0&&S.turn>=cf(S)){const my=strength(S,id);for(const e of alive(S)){if(e===id||!atWar(S,id,e))continue;
     if(my<strength(S,e)*0.7&&chance(n.diff==="hard"||n.pers==="warlord"?0.15:0.05)){const t=owned(S,e).filter(r=>!wasted(S,r)).sort((a,b)=>S.regions[b].troops-S.regions[a].troops)[0];if(t){O.push({t:"nukeStrike",region:t});break}}}}
   return O}
 
@@ -813,7 +855,7 @@ function tensionTurn(S){if(S.lastCapture==null)S.lastCapture=S.turn;
   if((S.turn-S.tensionStart)%TENSION_EVERY===0&&S.turn>S.tensionStart){let n=0;for(let i=0;i<al.length;i++)for(let j=i+1;j<al.length;j++){const R=rel(S,al[i],al[j]);if(!R||R.level===2||R.level<=-1)continue;setLevel(S,al[i],al[j],R.level-1);n++}if(n)log(S,"all","Rising tension soured relations between nations.")}
   for(let i=0;i<al.length;i++)for(let j=i+1;j<al.length;j++){const a=al[i],b=al[j],R=rel(S,a,b);if(!R||R.level===2||R.level===-2||!neighbors(S,a,b)||!chance(INCIDENT_P))continue;
     if(R.level>-1)setLevel(S,a,b,R.level-1);addGriev(S,a,b);addGriev(S,b,a);log(S,"all",`Soldiers from ${NAT[a].name} and ${NAT[b].name} clashed at the border.`);
-    for(const[me,them]of[[a,b],[b,a]]){if(S.nations[me].human)offer(S,them,me,"incident");else{const ms=strength(S,me),ts=strength(S,them);if(S.turn>=CEASEFIRE&&ms>ts*1.1&&chance(0.4))declareWar(S,me,them,"border incident",true);else if(chance(0.3))summon(S,me,them,"a border incident")}}}}
+    for(const[me,them]of[[a,b],[b,a]]){if(S.nations[me].human)offer(S,them,me,"incident");else{const ms=strength(S,me),ts=strength(S,them);if(S.turn>=cf(S)&&ms>ts*1.1&&chance(0.4))declareWar(S,me,them,"border incident",true);else if(chance(0.3))summon(S,me,them,"a border incident")}}}}
 
 function nukeReview(S,id,who){const n=S.nations[id],N=n.nuke;if(!nukes(S)||!N||!n.human)return;
   if(N.done){log(S,id,`${who} reviewed your nuclear arsenal and kept it.`);return}
@@ -862,8 +904,14 @@ function rogueTurn(S){if(S.lastAttack==null)S.lastAttack=S.turn;
       const g=S.regions[r];let k=Math.min(g.troops+g.def,2+rnd(5));const kt=Math.min(g.troops,k);g.troops-=kt;g.def-=k-kt;casualty(S,t,k);S.nations[t].unrest=clamp(S.nations[t].unrest+5,0,100);
       log(S,"all",`☠ ${NAT[rid].name} attacked ${REG[r].n} in ${NAT[t].name} with ${pick(TERROR)}. ${k} soldier${k===1?" was":"s were"} killed.`)}}
   if(!rogues(S).length&&Object.values(S.nations).some(n=>n.msl)){for(const id in S.nations)delete S.nations[id].msl;log(S,"all","With no rogue states left, nations retired their missile arsenals.")}
-  if(S.turn<=COUP_AFTER)return;const q=S.turn-S.lastAttack;if(q<=COUP_QUIET)return;const p=0.1*(q-COUP_QUIET);
+  if(S.turn<=COUP_AFTER||S.opts?.lightning)return;const q=S.turn-S.lastAttack;if(q<=COUP_QUIET)return;const p=0.1*(q-COUP_QUIET);
   for(const id of shuffle(alive(S))){const n=S.nations[id];if(n.coup||!n.capital||S.regions[n.capital]?.owner!==id||owned(S,id).length<2)continue;if(chance(p)){militaryCoup(S,id);S.lastAttack=S.turn;return}}}
+function botMilitary(S,id){const O=[],n=S.nations[id];if(!milOn(S))return O;const M=mil(n),enemies=alive(S).filter(o=>o!==id&&atWar(S,id,o));let cash=n.cash-12;
+  if(!BRANCHES.some(b=>M.f[b])&&cash>25&&chance(0.5)){const b=pick(BRANCHES.filter(b=>M.t[b]<TIER_MAX));if(b){O.push({t:"milFund",b,on:true});cash-=MIL_RES}}
+  const foeAir=alive(S).some(o=>o!==id&&(S.nations[o].mil?.air||0)>0&&(atWar(S,id,o)||rel(S,id,o)?.level<0)),seaFoe=owned(S,id).some(r=>ADJ[r].some(a=>isSea(r,a)&&S.regions[a].owner&&S.regions[a].owner!==id));
+  const want=[["air",6],["navy",seaFoe?4:1],["icp",foeAir?4:0]].filter(([k,c])=>M[k]<c);if(want.length&&cash>=8){const [k,c]=pick(want),q=Math.min(c-M[k],3,Math.floor(cash/MIL_PRICE[k]));if(q>0)O.push({t:"milBuy",kind:k,n:q})}
+  if(M.air>0){const rg=airRange(S,id),t=[...rg].filter(r=>{const o=S.regions[r].owner;return o&&enemies.includes(o)&&!(S.regions[r].waste>S.turn)}).sort((a,b)=>S.regions[b].troops-S.regions[a].troops)[0];if(t&&S.regions[t].troops>2)O.push({t:"airStrike",region:t,n:M.air})}
+  return O}
 function botMissiles(S,id){const O=[],n=S.nations[id];if(!rogues(S).length)return O;const M=msl(n);
   if(!M.done&&!M.on&&n.cash>40&&chance(0.3))O.push({t:"mslToggle",on:true});
   if(M.done&&n.cash>30&&M.n<4)O.push({t:"mslBuy",n:Math.min(3,Math.floor((n.cash-20)/MSL_COST))});
@@ -1001,9 +1049,12 @@ function mapSVG(){const {v,full}=visible(S,myNat);const lines=[],has=k=>!!S.regi
 /* ---------- orders ---------- */
 const orderText=o=>{switch(o.t){
   case"move":return `Move ${o.n} from ${REG[o.from].n} to ${REG[o.to].n}`;
-  case"attack":return `Attack ${REG[o.to].n} from ${REG[o.from].n} with ${o.n}`;
+  case"attack":if(o.to2)return `⚔ Blitz ${REG[o.to].n} and ${REG[o.to2].n} with ${o.n} (split)`;return `Attack ${REG[o.to].n} from ${REG[o.from].n} with ${o.n}`;
   case"spy":if(o.mission==="distrust"){const g=(S.alliances||[]).find(k=>k.id===o.alliance);return `Spy: sow distrust in ${g?allyName(S,g):"an alliance"}`}return `Spy: ${MISSIONS[o.mission]} in ${NAT[o.target].name}${o.region?" ("+REG[o.region].n+")":""}`;
   case"surrender":return "Surrender: your land becomes neutral";
+  case"airStrike":return `✈ Air strike on ${REG[o.region].n} with ${o.n} plane${o.n>1?"s":""}`;
+  case"milBuy":return `Build ${o.n} ${UNITN[o.kind]}${o.n>1?"s":""} (${o.n*MIL_PRICE[o.kind]} money)`;
+  case"milFund":return `${o.on?"Fund":"Stop funding"} ${BRN[o.b].toLowerCase()} research${o.on?` (${MIL_RES} a turn)`:""}`;
   case"sacrifice":return `Sacrifice ${NAT[myNat].name} for ${NAT[o.target].name}${o.after==="summary"?", then end my game":", then keep watching"}`;
   case"nukeBuild":return o.on?"Resume building bombs":"Stop building bombs";
   case"nukeScrap":return `Dismantle ${o.n} bomb${o.n>1?"s":""} (${o.n*NUKE_SCRAP} money)`;
@@ -1028,11 +1079,11 @@ const orderText=o=>{switch(o.t){
   case"sanction":return `${o.join?"Join":"Leave"} sanctions against ${NAT[o.target].name}`;
   case"nukeStrike":return `☢ Nuclear strike on ${REG[o.region].n}`}};
 const isAct=o=>ACTIONS.includes(o.t)||(o.t==="resp"&&o.air&&o.choice==="accept");
-const actionCount=()=>myOrders.filter(isAct).reduce((t,o)=>t+actW(o),0);
+const actionCount=()=>myOrders.filter(isAct).reduce((t,o)=>t+actW(o,S,myNat),0);
 const spiesAt=t=>myOrders.filter(o=>o.t==="spy"&&o.target===t).length;
 function freeAt(r){const g=S.regions[r];if(g.owner===myNat)return g.troops-(g.def>0?0:1)-committed(r);if(g.guest?.nat===myNat)return g.guest.n-committed(r);return 0}
 function committed(from){return myOrders.filter(o=>(o.t==="move"||o.t==="attack"||o.t==="airlift")&&o.from===from).reduce((t,o)=>t+o.n,0)}
-function spendQueued(){return myOrders.reduce((t,o)=>t+(o.t==="mslBuy"?o.n*MSL_COST:o.t==="nukeScrap"?o.n*NUKE_SCRAP:o.t==="spy"?COST.spy:o.t==="dip"&&o.kind==="gift"?o.amount:o.t==="recruit"?o.n*COST.troop:o.t==="pol"?(POL_COST[o.kind]||0):0),0)}
+function spendQueued(){return myOrders.reduce((t,o)=>t+(o.t==="milBuy"?o.n*(MIL_PRICE[o.kind]||0):o.t==="milFund"&&o.on?MIL_RES:o.t==="mslBuy"?o.n*MSL_COST:o.t==="nukeScrap"?o.n*NUKE_SCRAP:o.t==="spy"?COST.spy:o.t==="dip"&&o.kind==="gift"?o.amount:o.t==="recruit"?o.n*COST.troop:o.t==="pol"?(POL_COST[o.kind]||0):0),0)}
 function addOrder(o){
   if(mode==="mp"&&submitted){toast("You've ended your turn. Waiting for the other player.");return}
   const ptk=S&&myNat?polTurnKind(S,S.nations[myNat]):null;
@@ -1044,7 +1095,9 @@ function addOrder(o){
   for(const k of ["nukeBuild","nukeScrap","nukeTest","mslToggle","mslBuy","surrender","sacrifice"])if(o.t===k)myOrders=myOrders.filter(x=>x.t!==k);
   if(o.t==="surrender")myOrders=myOrders.filter(x=>x.t!=="sacrifice");if(o.t==="sacrifice")myOrders=myOrders.filter(x=>x.t!=="surrender");
   if(o.t==="missile")myOrders=myOrders.filter(x=>!(x.t==="missile"&&x.region===o.region));
-  if(isAct(o)&&actionCount()+actW(o)>ACTION_CAP){toast(o.t==="airlift"?"An air-drop uses your whole turn. Remove your other troop and spy orders first.":`You can give ${ACTION_CAP} troop or spy orders per turn`);return}
+  if(o.t==="milBuy")myOrders=myOrders.filter(x=>!(x.t==="milBuy"&&x.kind===o.kind));if(o.t==="milFund")myOrders=myOrders.filter(x=>!(x.t==="milFund"&&x.b===o.b));
+  if(o.t==="airStrike")myOrders=myOrders.filter(x=>!(x.t==="airStrike"&&x.region===o.region));
+  if(isAct(o)&&actionCount()+actW(o,S,myNat)>ACTION_CAP){toast(o.t==="airlift"?"An air-drop uses your whole turn. Remove your other troop and spy orders first.":`You can give ${ACTION_CAP} troop or spy orders per turn`);return}
   if(o.t==="spy"&&spiesAt(o.target)>=SPY_CAP){toast(`Max ${SPY_CAP} spies per nation per turn`);return}
   if(o.t==="policy")myOrders=myOrders.filter(x=>x.t!=="policy");
   if(o.t==="resp")myOrders=myOrders.filter(x=>!(x.t==="resp"&&x.id===o.id));
@@ -1091,16 +1144,21 @@ function setupHTML(){const taken=lobby?Object.values(lobby.players||{}).filter(x
   return `<header class="bar"><button class="btn small" data-act="home">Back</button><h2>${mode==="solo"?"Solo game":"Host a game"}</h2></header>
   ${mode==="solo"?`<h3>Choose your nation</h3><div class="nats">${NATS.map(n=>natCard(n,taken.includes(n))).join("")}</div>`:`<p class="note">You'll both choose nations in the lobby after your friend joins.</p>`}
   <h3>Robot difficulty</h3><div class="seg">${["easy","normal","hard"].map(d=>`<button class="${setup.diff===d?"on":""}" data-act="diff" data-id="${d}">${d[0].toUpperCase()+d.slice(1)}</button>`).join("")}</div>
+  <h3>Game type</h3><div class="seg"><button class="${setup.opts?.lightning?"":"on"}" data-act="gtype" data-id="std">Standard</button><button class="${setup.opts?.lightning?"on":""}" data-act="gtype" data-id="lightning">Lightning</button></div>
+  ${setup.opts?.lightning?`<p class="note">${LT_TURNS} turns, then the highest score wins: 1 point per region and ${LT_CAP} more for each starting capital. Most soldiers breaks a tie. Attacks between nations from turn ${LT_CF}, and income is 1.5x. Build infantry, planes, ships and interceptors, and research tech tiers. No politics, nukes or coups.</p>`:""}
   <h3>Robots</h3><div class="seg">${[1,2,3,4,5].map(k=>`<button class="${(setup.robots||4)===k?"on":""}" data-act="robots" data-id="${k}">${k}</button>`).join("")}</div>
   <p class="note">${(setup.robots||4)+(mode==="solo"?1:2)} nations in total.${(setup.robots||4)+(mode==="solo"?1:2)>=6?` The map grows to ${(setup.robots||4)+(mode==="solo"?1:2)>=7?28:24} regions, and alliances can have 3 members.`:""}</p>
-  <h3>Game options</h3>${optToggle("politics","Advanced politics","Factions, demands, events, regional elections with campaigns, and loyalty for monarchies and dictatorships.")}${optToggle("nukes","Nuclear weapons","Secret nuclear programs, a bomb stockpile, and strikes that turn regions into wasteland.")}
+  ${setup.opts?.lightning?"":`<h3>Game options</h3>${optToggle("politics","Advanced politics","Factions, demands, events, regional elections with campaigns, and loyalty for monarchies and dictatorships.")}${optToggle("nukes","Nuclear weapons","Secret nuclear programs, a bomb stockpile, and strikes that turn regions into wasteland.")}`}
+  ${mode==="mp"?`<h3>Host only</h3>${optToggle("rps","Rock paper scissors taunt","Only you can see this setting. On a random turn from 1 to 5, one of you is told the other's leader called them a world-class loser at rock paper scissors.")}`:""}
   <button class="btn primary wide" data-act="${mode==="solo"?"startSolo":"createLobby"}" ${setup.nat||mode!=="solo"?"":"disabled"}>${mode==="solo"?"Start":"Create game"}</button>`}
 function lobbyHTML(){const L=lobby||{},hosting=L.host===me,players=L.players||{},mine=players[me],others=Object.entries(players).filter(([u])=>u!==me),otherNat=others[0]?.[1];
   const ready=others.length&&otherNat&&mine&&otherNat!==mine;
   return `<header class="bar"><button class="btn small" data-act="leaveLobby">Leave</button><h2>Game ${esc(code)}</h2></header>
   ${hosting?`<div class="codebox">Share this code<br><b>${esc(code)}</b><div class="row"><button class="btn small" data-act="invite">Send invite link</button></div></div>`:""}
-  <p class="note">Robots: ${L.robots||3} (${esc(L.diff)}). Advanced politics ${L.opts?.politics?"on":"off"}, nuclear weapons ${L.opts?.nukes?"on":"off"}.</p>
+  <p class="note">Robots: ${L.robots||3} (${esc(L.diff)}). ${L.opts?.lightning?`Lightning round: ${LT_TURNS} turns, highest score wins.`:`Advanced politics ${L.opts?.politics?"on":"off"}, nuclear weapons ${L.opts?.nukes?"on":"off"}.`}</p>
   <p>${others.length?`${hosting?"Your friend":"The host"}: <b>${otherNat?NAT[otherNat].name:"choosing a nation…"}</b>`:"Waiting for your friend to join…"}</p>
+  ${hosting&&L.opts?.rps?`<p class="note">Rock paper scissors taunt: on. Only you can see this.</p>`:""}
+  <h3>Your leader's name</h3><div class="row"><input id="leaderIn" maxlength="20" placeholder="Leader name" value="${esc(leaderDraft??L.leaders?.[me]??"")}" aria-label="Your leader's name"><button class="btn small" data-act="leaderName">${L.leaders?.[me]?"Saved":"Save"}</button></div>
   <h3>Choose your nation</h3><div class="nats">${NATS.map(n=>{const tk=Object.entries(players).some(([u,x])=>u!==me&&x===n);return natCard(n,tk)}).join("")}</div>
   <button class="btn ${mine===setup.nat&&mine?"":"primary"} wide" data-act="guestNat" ${setup.nat&&setup.nat!==mine?"":"disabled"}>${mine?(mine===setup.nat?`You're ${NAT[mine].name}`:"Change nation"):"Confirm nation"}</button>
   ${hosting?`<button class="btn primary wide" data-act="startMp" ${ready?"":"disabled"}>Start game</button><p class="note">${ready?"":"Start unlocks once you've both confirmed different nations."}</p>`:`<p class="note">${mine?"Waiting for the host to start.":""}</p>`}`}
@@ -1117,11 +1175,13 @@ function gameHTML(){if(!S)return `<p class="muted">Loading…</p>`;setMap(S);con
   const pol=isPolicyTurn(S),inc=Math.round(income(S,myNat)),left=Math.floor(n.cash-spendQueued());
   let h=`<header class="gbar" style="--nc:${NAT[myNat].color}"><div class="who"><span class="chip"></span><b>${NAT[myNat].name}</b><span class="ver">v22</span><span class="muted">${GOVN[n.gov]}</span></div>
     <button class="quit" data-act="quitAsk" aria-label="Quit game">Quit</button><button class="mute" data-act="mute" aria-label="Sound settings">${muted?"🔇":"🔊"}</button>
-    <div class="stats"><span>Turn <b>${S.turn}</b>${pol?` <em class="tag">Policy</em>`:""}</span><span>Treasury <b>${left}</b></span><span>Income <b>+${inc}</b></span><span class="${n.unrest>70?"hot":""}">Unrest <b>${Math.round(n.unrest)}</b></span>${S.opts?.politics&&n.gov==="dem"&&n.fac?(()=>{const P=electionProjection(S,myNat);return `<span class="${P.you<50?"hot":""}">Polls <b>${P.you}%</b></span>`})():""}</div></header>`;
+    <div class="stats"><span>Turn <b>${S.turn}</b>${S.opts?.lightning?` of ${LT_TURNS}`:""}${pol?` <em class="tag">Policy</em>`:""}</span><span>Treasury <b>${left}</b></span><span>Income <b>+${inc}</b></span><span class="${n.unrest>70?"hot":""}">Unrest <b>${Math.round(n.unrest)}</b></span>${S.opts?.politics&&n.gov==="dem"&&n.fac?(()=>{const P=electionProjection(S,myNat);return `<span class="${P.you<50?"hot":""}">Polls <b>${P.you}%</b></span>`})():""}</div></header>`;
   if(S.over)h+=overHTML();
   else if(!n.alive&&n.sacrificed&&n.after==="summary")h+=`<div class="over"><div class="banner">Your war is over</div><p>You sacrificed your nation for ${NAT[n.sacrificed].name} on turn ${n.sacTurn}. ${NAT[n.sacrificed].name} ${S.nations[n.sacrificed]?.alive?`holds ${owned(S,n.sacrificed).length} regions.`:"has since fallen."}</p><button class="btn primary" data-act="home">Back to menu</button></div>`;
   else if(!n.alive)h+=`<div class="warn">${n.sacrificed?`You sacrificed your nation for ${NAT[n.sacrificed].name}.`:"Your nation has fallen."} You're watching the rest of the war with the whole map revealed.${mode==="mp"?" The game continues until someone wins.":""}</div>`;
-  if(S.turn===1&&n.alive&&!S.over)h+=`<div class="notice small"><b>Neutral regions are fair game from turn 1.</b> Nations can't attack each other before turn ${CEASEFIRE}.</div>`;
+  h+=rpsCard();
+  if(S.opts?.lightning)h+=scoreBoard();
+  if(S.turn===1&&n.alive&&!S.over)h+=`<div class="notice small"><b>Neutral regions are fair game from turn 1.</b> Nations can't attack each other before turn ${cf(S)}.</div>`;
   if(n.coup&&n.alive&&!S.over)h+=`<div class="warn"><b>State of emergency.</b> Rogue officers hold ${REG[n.coup.region].n}. Retake it within ${Math.max(0,n.coup.until-S.turn)} turn${n.coup.until-S.turn===1?"":"s"}, or ${NAT[myNat].name} falls to them.</div>`;
   const offers=S.offers.filter(o=>o.to===myNat&&!(o.kind==="trade"&&atWar(S,myNat,o.from))).length;
   const a5=S.offers.filter(o=>o.to===myNat&&o.kind==="article5");if(a5.length&&!S.over)h+=`<div class="warn"><b>Article 5.</b> ${a5.map(o=>NAT[o.from].name).join(", ")} was attacked. Respond on the Diplomacy tab, or the alliance ends when this turn resolves. <button class="btn small" data-act="tab" data-id="dip">Respond</button></div>`;
@@ -1144,7 +1204,7 @@ function gameHTML(){if(!S)return `<p class="muted">Loading…</p>`;setMap(S);con
   if(!S.over&&n.alive)h+=ordersHTML();
   else if(!S.over&&mode==="solo")h+=`<div class="endbar"><button class="btn primary" data-act="nextTurn">Next turn</button></div>`;
   if(introOpen)h+=`<div class="sheet" role="dialog" aria-label="How to play"><div class="inner"><h2>Welcome, leader of ${NAT[myNat].name}</h2>
-    <p>Five nations share the world. To win, hold every starting capital but one (all of them in 3-nation games) for 3 turns. Allies of 10+ turns can win together. Each turn everyone gives orders at once: up to 3 troop or spy orders, plus as much diplomacy as you like. Then the turn resolves. Every 5 turns you set taxes and a budget. Money becomes soldiers, defenses, infrastructure and propaganda, but soldiers come out of your population for good. High taxes breed unrest, and unrest can topple your government. Nations can't attack each other before turn ${CEASEFIRE}, so use the first turns to grab neutral land.${S.opts?.politics?" Advanced politics is on: keep your factions happy, and democracies campaign before each election."+(S.nations[myNat].gov==="dem"?" First, choose your party at the top of the screen.":""):""}${S.opts?.nukes?" Nuclear weapons are on: a secret program can give you the bomb.":""}</p>
+    <p>Five nations share the world. To win, hold every starting capital but one (all of them in 3-nation games) for 3 turns. Allies of 10+ turns can win together. Each turn everyone gives orders at once: up to 3 troop or spy orders, plus as much diplomacy as you like. Then the turn resolves. Every 5 turns you set taxes and a budget. Money becomes soldiers, defenses, infrastructure and propaganda, but soldiers come out of your population for good. High taxes breed unrest, and unrest can topple your government. Nations can't attack each other before turn ${cf(S)}, so use the first turns to grab neutral land.${S.opts?.politics?" Advanced politics is on: keep your factions happy, and democracies campaign before each election."+(S.nations[myNat].gov==="dem"?" First, choose your party at the top of the screen.":""):""}${S.opts?.nukes?" Nuclear weapons are on: a secret program can give you the bomb.":""}</p>
     ${S.opts?.politics&&S.nations[myNat].demand?`<p class="notice small"><b>${FACN[S.nations[myNat].demand.f]} demand for this term:</b> ${esc(S.nations[myNat].demand.t)}. Set your policy this turn to meet it.</p>`:""}
     <button class="btn primary wide" data-act="closeIntro">Start</button></div></div>`;
   if(quitAsk)h+=`<div class="sheet" role="dialog" aria-label="Quit game"><div class="inner"><h2>Leave the game?</h2>
@@ -1165,8 +1225,8 @@ function nukeConfirmHTML(){const r=confirmNuke,g=S.regions[r],o=g.owner;return `
 function confirmHTML(){const o=S.regions[confirmAtk.to].owner;return `<div class="sheet" role="dialog" aria-label="Confirm war"><div class="inner"><h2>Unprovoked war on ${NAT[o].name}?</h2>
   <p>You have no grounds for war with ${NAT[o].name}. Attacking ${REG[confirmAtk.to].n} declares war, and every nation except your ally will think less of you: relations drop one level with each of them.</p>
   <div class="row"><button class="btn" data-act="cancelAtk">Cancel</button><button class="btn primary" data-act="confirmAtk" style="flex:1">Declare war and attack</button></div></div></div>`}
-function overHTML(){const w=S.winner||[],won=w.includes(myNat);return `<div class="over ${won?"won":""}"><div class="banner">${won?"Victory":w.length?"Defeat":"Game over"}</div><p>${w.length?w.map(x=>NAT[x].name).join(" and ")+(w.length>1?" rule the world together.":" rules the world."):"No one prevailed."}</p>${S.winReason?`<p class="note">How it ended: ${esc(S.winReason)}.</p>`:""}<button class="btn primary" data-act="home">Back to menu</button></div>`}
-function capsLine(){const held=S.caps.map(c=>{const natOf=NATS.find(k=>NAT[k].home===c),o=S.regions[c].owner;return `<span class="cap" style="--nc:${NAT[natOf].color}">★ ${NAT[natOf].name}${o!==natOf?` <em class="held" style="--hc:${o?NAT[o].color:"var(--soft)"}">${o?"held by "+NAT[o].name:S.regions[c].waste>S.turn?"wasteland":"neutral"}</em>`:""}</span>`}).join("");
+function overHTML(){const w=S.winner||[],won=w.includes(myNat);return `<div class="over ${won?"won":""}"><div class="banner">${won?"Victory":w.length?"Defeat":"Game over"}</div><p>${w.length?w.map(x=>NAT[x].name).join(" and ")+(S.opts?.lightning?(w.length>1?" share the lightning round.":" wins the lightning round."):(w.length>1?" rule the world together.":" rules the world.")):"No one prevailed."}</p>${S.winReason?`<p class="note">How it ended: ${esc(S.winReason)}.</p>`:""}${S.final?`<ol class="final">${S.final.map(x=>`<li><b>${esc(NAT[x.id].name)}</b> ${x.score} points <span class="note">(${x.regions} regions, ${x.caps} capitals, ${x.soldiers} soldiers)</span></li>`).join("")}</ol>`:""}<button class="btn primary" data-act="home">Back to menu</button></div>`}
+function capsLine(){if(S.opts?.lightning){const held=S.caps.map(c=>{const natOf=NATS.find(k=>NAT[k].home===c),o=S.regions[c].owner;return `<span class="cap" style="--nc:${NAT[natOf].color}">★ ${NAT[natOf].name}${o!==natOf?` <em class="held" style="--hc:${o?NAT[o].color:"var(--soft)"}">${o?"held by "+NAT[o].name:"neutral"}</em>`:""}</span>`}).join("");return `<p class="note">Each starting capital you hold is worth ${LT_CAP} extra points.</p><div class="caps"><span class="muted">Capitals</span>${held}</div>`}const held=S.caps.map(c=>{const natOf=NATS.find(k=>NAT[k].home===c),o=S.regions[c].owner;return `<span class="cap" style="--nc:${NAT[natOf].color}">★ ${NAT[natOf].name}${o!==natOf?` <em class="held" style="--hc:${o?NAT[o].color:"var(--soft)"}">${o?"held by "+NAT[o].name:S.regions[c].waste>S.turn?"wasteland":"neutral"}</em>`:""}</span>`}).join("");
   const mine=S.caps.filter(c=>S.regions[c].owner===myNat).length,G=allianceOf(S,myNat),gm=G?G.members.filter(x=>S.nations[x]?.alive):[],al=gm.length>1?gm.filter(x=>x!==myNat):null,ok=G&&S.turn-G.since>=10,ours=G?S.caps.filter(c=>gm.includes(S.regions[c].owner)).length:0;
   const myHold=S.hold?.[myNat]||0,pairHold=G?(S.hold?.[gm.join("+")]||0):0;
   const need=S.caps.length<=3?S.caps.length:S.caps.length-1;
@@ -1181,25 +1241,28 @@ function mapTab(){let h=capsLine()+mapSVG()+`<p class="legend"><span>★ capital
     <p class="kv"><span>Troops <b>${see?g.troops:"?"}</b></span><span>Defenses <b>${see?g.def:"?"}</b></span><span>Pop <b>${see||own===myNat?g.pop:"?"}</b></span><span>Infra <b>${see?g.infra:"?"}</b>/3</span></p>`;
   if(g.waste>S.turn)h+=`<p class="warn small">Nuclear wasteland. No one can enter for ${g.waste-S.turn} more turn${g.waste-S.turn>1?"s":""}.</p>`;
   if(g.guest)h+=`<p class="note">${g.guest.nat===myNat?"Your":NAT[g.guest.nat].name+"'s"} troops stationed here: <b>${g.guest.n}</b></p>`;
+  if(milOn(S)&&own!==myNat&&!(own&&allied(S,myNat,own))&&!(g.waste>S.turn)&&n.alive&&(n.mil?.air||0)>0){const inR=airRange(S,myNat).has(sel),q=myOrders.find(o=>o.t==="airStrike"&&o.region===sel),Ro=own?rel(S,myNat,own):null,why=own&&(Ro?.truce>0||S.turn<cf(S))?(Ro?.truce>0?"truce":`ceasefire until turn ${cf(S)}`):"";
+    h+=`<h4>Air strike</h4>`+(inR&&!why?`<div class="row wrap"><select id="asN" aria-label="Planes to send">${Array.from({length:n.mil.air},(_,i)=>i+1).map(k=>`<option ${q?.n===k||(!q&&k===n.mil.air)?"selected":""}>${k}</option>`).join("")}</select><button class="btn small danger ${q?"on":""}" data-act="airStrike">${q?`✓ ${q.n} planes`:"Strike"}</button><span class="note">Uses 1 order.${own&&rel(S,myNat,own)?.level>-2?` Declares war on ${NAT[own].name}.`:""}${own&&S.nations[own].mil?.icp?` They have ${S.nations[own].mil.icp} interceptor${S.nations[own].mil.icp>1?"s":""}.`:""}</span></div>`:`<p class="note">${why?`Can't strike: ${why}.`:"Out of range for your planes."}</p>`)}
   if(own&&isRogue(S,own)&&!(g.waste>S.turn)){const M=n.msl,ok=M?.n>0&&inRange(S,myNat,sel),q=myOrders.find(o=>o.t==="missile"&&o.region===sel);
     h+=`<p class="note">${NAT[own].name} is at war with everyone.${M?.n?(ok?"":` Your missiles can't reach it: they fly ${MSL_RANGE} regions.`):""}</p>`;
     if(ok)h+=`<div class="row wrap"><select id="mslN" aria-label="Missiles to fire">${Array.from({length:M.n},(_,i)=>i+1).map(k=>`<option ${q?.n===k||(!q&&k===M.n)?"selected":""}>${k}</option>`).join("")}</select><button class="btn small danger ${q?"on":""}" data-act="missile">${q?`✓ ${q.n} queued`:"Fire missiles"}</button><span class="note">Each kills ${MSL_KILL}. Doesn't use an order.</span></div>`}
-  {const N=S.opts?.nukes&&n.nuke;if(N&&N.bombs>0&&own!==myNat&&!(g.waste>S.turn)&&!(own&&allied(S,myNat,own))&&S.turn>=CEASEFIRE)h+=`<div class="row"><button class="btn small danger" data-act="nukeAsk">☢ Nuclear strike (${N.bombs} bomb${N.bombs>1?"s":""})</button></div>`}
+  {const N=S.opts?.nukes&&n.nuke;if(N&&N.bombs>0&&own!==myNat&&!(g.waste>S.turn)&&!(own&&allied(S,myNat,own))&&S.turn>=cf(S))h+=`<div class="row"><button class="btn small danger" data-act="nukeAsk">☢ Nuclear strike (${N.bombs} bomb${N.bombs>1?"s":""})</button></div>`}
   if(own===myNat||g.guest?.nat===myNat){const free=freeAt(sel);
     if(polTurnKind(S,n))h+=`<p class="warn small">⏸ Troops frozen this turn: no moving, attacking or air-dropping. Attacks resume next turn.</p>`;
-    h+=`<p class="note">${free>0?`${free} troops free to send.`:"No free troops here."} Troop and spy orders: ${actionCount()} of ${ACTION_CAP} used.${S.turn<CEASEFIRE?` Nations can't attack each other before turn ${CEASEFIRE}; neutral regions are fair game.`:""}</p><div class="chips">${ADJ[sel].map(a=>{const t=S.regions[a],o=t.owner,host=o&&o!==myNat&&basing(S,o,myNat),lbl=o===myNat||host?"Move":"Attack";
-      const ptk2=polTurnKind(S,n),Ro=o&&o!==myNat?rel(S,myNat,o):null,why=ptk2?"troops frozen":t.waste>S.turn?"wasteland":o&&o!==myNat&&!host?(allied(S,myNat,o)?"ally":Ro?.truce>0?`truce, ${Ro.truce} turn${Ro.truce>1?"s":""}`:S.turn<CEASEFIRE?`ceasefire until turn ${CEASEFIRE}`:""):"";
+    h+=`<p class="note">${free>0?`${free} troops free to send.`:"No free troops here."} Troop and spy orders: ${actionCount()} of ${ACTION_CAP} used.${S.turn<cf(S)?` Nations can't attack each other before turn ${cf(S)}; neutral regions are fair game.`:""}</p><div class="chips">${ADJ[sel].map(a=>{const t=S.regions[a],o=t.owner,host=o&&o!==myNat&&basing(S,o,myNat),lbl=o===myNat||host?"Move":"Attack";
+      const ptk2=polTurnKind(S,n),Ro=o&&o!==myNat?rel(S,myNat,o):null,why=ptk2?"troops frozen":t.waste>S.turn?"wasteland":o&&o!==myNat&&!host?(allied(S,myNat,o)?"ally":Ro?.truce>0?`truce, ${Ro.truce} turn${Ro.truce>1?"s":""}`:S.turn<cf(S)?`ceasefire until turn ${cf(S)}`:""):"";
       return `<button class="chipbtn ${target===a?"on":""}" data-act="target" data-id="${a}" ${why||free<=0?"disabled":""}>${lbl} ${esc(REG[a].s||REG[a].n)}${why?` (${why})`:""}</button>`}).join("")}</div>`;
     if(target&&free>0){const o=S.regions[target].owner,atk=o!==myNat&&!(o&&basing(S,o,myNat)),amt=Math.min(amount,free);
       const warn=atk&&o&&rel(S,myNat,o)?.level>-2?`<p class="warn small">Attacking ${NAT[o].name} declares war.${hasGrievance(S,myNat,o)?"":" It's unprovoked, so relations drop a level with every nation except your ally."}</p>`:"";
       const tg=S.regions[target],seeT=visible(S,myNat).v.has(target),dv=tg.troops+tg.def+(tg.guest&&tg.guest.nat!==myNat?tg.guest.n:0),bon=o&&NAT[o].tier==="weak"&&S.nations[o].homeRegions.includes(target);
       const odds=atk&&seeT?`<p class="note" id="odds" data-def="${dv}" data-bonus="${bon?1:0}">Defenders: <b>${dv}</b>${bon?" (home defense bonus)":""}. Chance to win with <span id="oddsn">${amt}</span>: <b id="oddsv">${Math.round(winChance(amt,dv,bon)*100)}%</b></p>`:atk?`<p class="note">Defender count unknown.</p>`:"";
-      h+=`${warn}${odds}<div class="row"><input type="range" id="amt" min="1" max="${free}" value="${amt}" data-act="amount"><b id="amtv">${amt}</b></div>
+      const bz=atk&&milOn(S)&&tierOf(n,"inf")>=3?ADJ[sel].filter(a=>a!==target&&S.regions[a].owner!==myNat&&!(S.regions[a].waste>S.turn)&&!(S.regions[a].owner&&(allied(S,myNat,S.regions[a].owner)||basing(S,S.regions[a].owner,myNat)))):[];
+      h+=`${warn}${odds}${bz.length?`<div class="row wrap"><label class="note" for="blitz">Blitz: also hit</label><select id="blitz"><option value="">No</option>${bz.map(a=>`<option value="${a}">${REG[a].n}</option>`).join("")}</select><span class="note">Soldiers split between both.</span></div>`:""}<div class="row"><input type="range" id="amt" min="1" max="${free}" value="${amt}" data-act="amount"><b id="amtv">${amt}</b></div>
       <button class="btn primary wide" data-act="addMove">${atk?"Attack":"Move"} ${REG[target].n}</button>`}
     const drops=Object.keys(S.regions).filter(r=>r!==sel&&!ADJ[sel].includes(r)&&(S.regions[r].owner===myNat||(S.regions[r].owner&&basing(S,S.regions[r].owner,myNat))));
-    if(free>0&&drops.length&&!polTurnKind(S,n))h+=`<h4>Air-drop</h4><p class="note">Fly troops to any of your regions that isn't a neighbor. Uses your whole turn: no other troop or spy orders.</p>
+    if(free>0&&drops.length&&!polTurnKind(S,n))h+=`<h4>Air-drop</h4><p class="note">Fly troops to any of your regions that isn't a neighbor. ${actW({t:"airlift"},S,myNat)<ACTION_CAP?`Uses ${actW({t:"airlift"},S,myNat)} of your ${ACTION_CAP} orders (your planes help).`:"Uses your whole turn: no other troop or spy orders."}</p>
       <div class="row wrap"><select id="dropTo" aria-label="Air-drop destination">${drops.map(r=>`<option value="${r}">${REG[r].n}</option>`).join("")}</select><select id="dropN" aria-label="Troops to air-drop">${[...new Set([free,Math.ceil(free/2),5,10].filter(x=>x>0&&x<=free))].sort((x,y)=>x-y).map(x=>`<option ${x===free?"selected":""}>${x}</option>`).join("")}</select>
-      <button class="btn small" data-act="airlift" ${actionCount()>0?"disabled":""}>Air-drop</button></div>${actionCount()>0?`<p class="note">Remove your other troop and spy orders to air-drop.</p>`:""}`;
+      <button class="btn small" data-act="airlift" ${actionCount()+actW({t:"airlift"},S,myNat)>ACTION_CAP?"disabled":""}>Air-drop</button></div>${actionCount()+actW({t:"airlift"},S,myNat)>ACTION_CAP?`<p class="note">Remove other troop and spy orders to air-drop.</p>`:""}`;
     const qf=myOrders.find(o=>o.t==="focus")?.region,isRally=qf?qf===sel:(n.defFocus===sel||(!n.defFocus&&n.capital===sel));
     if(own===myNat)h+=`<div class="row"><button class="btn small" data-act="focus" ${isRally?"disabled":""}>${isRally?"✓ Rally point":"Make this the rally point"}</button><span class="note">New troops and defenses report to the rally point.</span>${!n.capital?(()=>{const qc=myOrders.find(o=>o.t==="capital")?.region;return `<button class="btn small" data-act="capital" ${qc===sel?"disabled":""}>${qc===sel?"✓ New capital":"Make this the capital"}</button>`})():""}</div>`}
   return h+`</section>`}
@@ -1271,7 +1334,7 @@ function dipTab(){const n=S.nations[myNat];let h="";const offs=S.offers.filter(o
         h+=b("ally",why?`${lbl} (${why})`:lbl,!why)}
       if(R.trade)h+=b("cancelTrade","Cancel trade");else h+=b("trade",sanctionPair(S,myNat,o)?"Trade deal (sanctions)":"Trade deal",R.level>=0&&!sanctionPair(S,myNat,o));
       h+=`</div><div class="row wrap"><span class="note">Gift</span>${[10,25,50].map(a=>`<button class="btn small ${myOrders.some(x=>x.t==="dip"&&x.kind==="gift"&&x.target===o&&x.amount===a)?"on":""}" data-act="gift" data-id="${o}" data-n="${a}">${a}</button>`).join("")}</div><div class="row wrap">`;
-      if(R.level<2&&grounds&&!canDeclare(S,myNat,o))h+=`</div><div class="row wrap"><button class="btn small" disabled>Declare war (${R.truce>0?`truce, ${R.truce} turn${R.truce>1?"s":""}`:S.turn<CEASEFIRE?`ceasefire until turn ${CEASEFIRE}`:"not now"})</button>`;
+      if(R.level<2&&grounds&&!canDeclare(S,myNat,o))h+=`</div><div class="row wrap"><button class="btn small" disabled>Declare war (${R.truce>0?`truce, ${R.truce} turn${R.truce>1?"s":""}`:S.turn<cf(S)?`ceasefire until turn ${cf(S)}`:"not now"})</button>`;
       if((S.sanctions?.[myNat]||[]).includes(o))h+=`</div><div class="row wrap">`+b("liftSanctions","Ask them to lift sanctions")+`<span class="note">They agree 1 time in 3.</span>`;
       if(R.level<2&&grounds&&canDeclare(S,myNat,o))h+=`</div><div class="row wrap">`+b("war","Declare war")+(canSummon(S,myNat,o)?b("summon","Summon ambassador"):"")+`<span class="note">You have grounds against them. Declaring war first means your attacks win ties that turn, but you must attack them the same turn.</span>`;
       if(S.opts?.nukes&&knownProgram(S,o))h+=`</div><div class="row wrap">`+b("nukeStop","Demand they stop their nuclear program")+`<span class="note">If they refuse, all their trade deals are cancelled and you gain grounds for war.</span>`;
@@ -1313,7 +1376,7 @@ function polTab(){const n=S.nations[myNat],pol=isPolicyTurn(S),q=myOrders.find(o
   if(q)h+=`<p class="notice small">✓ Policy set for this term: tax ${q.tax}%, ${K.map(k=>q.budget[k]+"% "+{troops:"troops",def:"defenses",infra:"infrastructure",prop:"propaganda"}[k]).join(", ")}.</p>`;
   if(!locked&&dr&&!q)h+=`<p class="warn small">Not saved yet. Tap Set policy to lock these numbers in.</p>`;else if(!locked&&dr&&q&&(dr.tax!==q.tax||["troops","def","infra","prop"].some(k=>dr.budget[k]!==q.budget[k])))h+=`<p class="warn small">Changed since you saved. Tap Update policy to lock these in.</p>`;
   if(!locked)h+=`<p class="warn small" id="overmsg" ${alloc>100?"":"hidden"}>Allocations can't exceed 100%.</p><button class="btn primary wide" id="savePol" data-act="savePol" ${alloc>100?"disabled":""}>${q?"Update policy":"Set policy for this term"}</button>`;
-  h+=nukeCard()+missileCard();
+  h+=militaryCard()+nukeCard()+missileCard();
   h+=`<h3>Recruit from treasury</h3><p class="note">Spend saved money on extra troops right now, on top of your budget. They appear in the region you pick, cost ${COST.troop} each, and come out of your population for good.</p><div class="row wrap"><select id="recR" aria-label="Where to place recruits">${owned(S,myNat).map(r=>`<option value="${r}" ${r===(n.defFocus||n.capital)?"selected":""}>${REG[r].n}</option>`).join("")}</select><select id="rec" aria-label="How many"><option>5</option><option>10</option><option>20</option></select><button class="btn small" data-act="recruit">Recruit</button></div>${(()=>{const r=myOrders.find(o=>o.t==="recruit");return r?`<p class="notice small">✓ Recruiting ${r.n} in ${REG[r.region]?.n||"your rally point"} this turn.</p>`:""})()}`;
   return h}
 function bar(v,cls=""){return `<span class="bar ${cls}"><span style="width:${clamp(v,0,100)}%"></span></span>`}
@@ -1363,6 +1426,17 @@ function nukeCard(){const n=S.nations[myNat],N=n.nuke;if(!S.opts?.nukes||!N)retu
   else h+=`<p>${N.progress} of ${NUKE_TURNS} funded turns done. <b>${NUKE_TURNS-N.progress} to go.</b> ${N.public?"The program has been exposed.":"The program is secret."}</p>
     <p class="note">While funded it takes exactly ${NUKE_FUND}% of your income each turn, off the top. Unfunded turns pause progress. Each funded turn has a small chance of a leak.</p>
     <div class="row"><button class="btn small ${on?"on":""}" data-act="nukeToggle" data-v="${on?0:1}">${on?"Funded: tap to pause":"Paused: tap to fund"}</button></div>`;
+  return h}
+function scoreBoard(){const B=S.final||ltBoard(S);return `<div class="board" aria-label="Scoreboard"><div class="bh"><b>Score</b><span class="note">${S.over?"Final":`${Math.max(0,LT_TURNS-S.turn+1)} turn${LT_TURNS-S.turn+1===1?"":"s"} left`} · 1 per region, ${LT_CAP} per capital</span></div>${B.map((x,i)=>`<div class="br ${x.id===myNat?"me":""}" style="--nc:${NAT[x.id].color}"><span>${i+1}. ${esc(NAT[x.id].name)}</span><span class="note">${x.regions} reg · ${x.caps}★ · ${x.soldiers} sol</span><b>${x.score}</b></div>`).join("")}</div>`}
+function militaryCard(){if(!milOn(S))return "";const n=S.nations[myNat],M=n.mil||mil(JSON.parse(JSON.stringify(n))),q=k=>myOrders.find(o=>o.t==="milBuy"&&o.kind===k),bl=blockaded(S,myNat);
+  let h=`<h3>Military</h3><p class="note">Everyone moves up a tier every 4 turns. Funding a branch costs ${MIL_RES} a turn and gets its next tier in 2. Each tier makes the branch 20% stronger. Tier 3 unlocks its special ability.</p>`;
+  for(const b of BRANCHES){const t=M.t[b],qf=myOrders.find(o=>o.t==="milFund"&&o.b===b),on=qf?qf.on:M.f[b],left=Math.ceil((4-M.p[b])/(on?2:1));
+    h+=`<div class="opt"><div><b>${BRN[b]}: tier ${t} of ${TIER_MAX}</b><p class="note">${t<TIER_MAX?`Next tier in ${left} turn${left===1?"":"s"}. `:""}${t>=3?`${ABIL[b]} unlocked.`:`Tier 3: ${ABIL[b]}.`} ${{inf:"Blitz: one attack order hits two neighboring regions, soldiers split between them.",air:"Long range: strikes reach 3 regions instead of 2.",navy:"Carriers: planes can strike across sea lanes, with 1 more range."}[b]}</p></div>${t<TIER_MAX?`<button class="btn small ${on?"on":""}" data-act="milFund" data-id="${b}" data-v="${on?0:1}">${on?"Funded":"Fund"}</button>`:""}</div>`}
+  const unit=(k,desc)=>{const qq=q(k);return `<div class="opt"><div><b>${UNITN[k][0].toUpperCase()+UNITN[k].slice(1)}s: ${M[k]}</b><p class="note">${MIL_PRICE[k]} each. ${desc}</p></div><div class="row"><select id="mb_${k}" aria-label="${UNITN[k]}s to build">${[1,2,3,5].map(x=>`<option ${qq?.n===x?"selected":""}>${x}</option>`).join("")}</select><button class="btn small ${qq?"on":""}" data-act="milBuy" data-id="${k}">${qq?`✓ ${qq.n}`:"Build"}</button></div></div>`};
+  h+=unit("air",`Strike any region within ${2+(M.t.air>=3?1:0)+(M.t.navy>=3?1:0)} of your land${M.t.navy>=3?" (carriers: across sea lanes too)":" over land"}: each plane kills ${Math.round(tierMult(n,"air")*10)/10} defenders. A strike uses 1 order. With planes, an air-drop uses 2 orders instead of 3.`);
+  h+=unit("navy",`Each ship adds 10% to your attacks across sea lanes and takes 10% off enemy sea attacks on you, up to 50%. An enemy at war with you with a bigger navy cuts your trade income.`);
+  h+=unit("icp",`Each one gives a 25% chance to shoot down every incoming plane, up to 100% with 4. Guards all your land and is never used up.`);
+  if(bl)h+=`<p class="warn small">${NAT[bl].name}'s navy is bigger than yours: your trade income is cut.</p>`;
   return h}
 function missileCard(){if(!rogues(S).length)return "";const n=S.nations[myNat],M=n.msl||{},q=myOrders.find(o=>o.t==="mslToggle"),on=q?q.on:M.on,qb=myOrders.find(o=>o.t==="mslBuy");
   let h=`<h3>Ballistic missiles</h3><p class="note">Only while a rogue state exists, and only against rogue states. Research costs ${MSL_RES} a turn for ${MSL_TURNS} turns. Each missile costs ${MSL_COST}, kills ${MSL_KILL} of the rogue state's fighters and flies up to ${MSL_RANGE} regions. Fire any number each turn from the map, without using an order. Arsenals are retired once no rogue state is left.</p>`;
@@ -1416,7 +1490,8 @@ async function startMp(){const L=lobby,humans=Object.values(L.players).filter(Bo
   try{await gref().update({phase:"pick",pick:{order,claims:{}},seats:order.map(n=>{const uid=Object.keys(L.players).find(u=>L.players[u]===n)||null;return{nat:n,human:uid,diff:L.diff}})})}catch{toast("Couldn't start. Try again.")}}
 let picking=false;
 async function hostAutoPick(){if(picking||!lobby||lobby.phase!=="pick"||lobby.host!==me)return;const P=lobby.pick;picking=true;
-  try{if(P.order.every(n=>pickDone(P,n))){const picks={};for(const n of P.order)picks[n]=claimOf(P,n);const st=newState(lobby.seats,picks,lobby.opts||{});await gref().update({phase:"play",state:JSON.stringify(st),orders:{},done:{},deadline:Date.now()+90000});return}
+  try{if(P.order.every(n=>pickDone(P,n))){const picks={};for(const n of P.order)picks[n]=claimOf(P,n);const st=newState(lobby.seats,picks,lobby.opts||{});const hu=lobby.seats.filter(s=>s.human).map(s=>s.human),up={phase:"play",state:JSON.stringify(st),orders:{},done:{},deadline:Date.now()+90000};
+      if(lobby.opts?.rps&&hu.length===2){up.rpsTurn=1+rnd(5);up.rpsTo=pick(hu);if(up.rpsTurn===1)up.rps=rpsStart(up.rpsTo,hu.find(u=>u!==up.rpsTo))}await gref().update(up);return}
     const humansDone=P.order.filter(n=>lobby.seats.find(s=>s.nat===n)?.human).every(n=>pickDone(P,n));if(!humansDone)return;
     for(const b of P.order){if(lobby.seats.find(s=>s.nat===b)?.human||pickDone(P,b))continue;const c=pickChoices(Object.keys(P.claims||{}),b);if(c.length)await gref().claim("pick.claims",pick(c),b,(d,v)=>!Object.values(d?.pick?.claims||{}).includes(v))}}
   catch{}finally{picking=false}}
@@ -1428,12 +1503,47 @@ async function hostTick(){if(mode!=="mp"||!lobby||lobby.host!==me||lobby.phase!=
   const humans=lobby.seats.filter(s=>s.human).map(s=>s.human),allDone=humans.every(u=>lobby.done?.[u]||!S.nations[lobby.players[u]]?.alive);
   if(!allDone)return;resolving=true;
   try{const by={};for(const u of humans){try{by[lobby.players[u]]=JSON.parse(lobby.orders?.[u]||"[]")}catch{by[lobby.players[u]]=[]}}
-    const S2=resolve(S,by);await gref().update({state:JSON.stringify(S2),orders:{},done:{},deadline:Date.now()+90000,phase:S2.over?"over":"play"})}
+    const S2=resolve(S,by),up={orders:{},done:{},deadline:Date.now()+90000,phase:S2.over?"over":"play"};
+    if(lobby.opts?.rps&&!lobby.rps&&lobby.rpsTurn===S2.turn&&!S2.over){const hu=humans.filter(u=>S2.nations[lobby.players[u]]?.alive);if(hu.length===2&&hu.includes(lobby.rpsTo))up.rps=rpsStart(lobby.rpsTo,hu.find(u=>u!==lobby.rpsTo))}
+    if(lobby.rps?.stage==="done"&&!lobby.rps.announced){S2.log.push({t:S.turn,to:"all",text:rpsNews(lobby)});up["rps.announced"]=true}
+    up.state=JSON.stringify(S2);await gref().update(up)}
   catch(e){toast("Turn failed to resolve. Retrying.")}resolving=false}
-setInterval(()=>{hostTick();hostAutoPick()},1000);
+setInterval(()=>{hostTick();hostAutoPick();hostRps()},1000);
+/* ---------- rock paper scissors (host-only setting, online games with two humans) ---------- */
+const RPS=["rock","paper","scissors"],RPS_ICON={rock:"✊",paper:"✋",scissors:"✌"},RPS_BEATS={rock:"scissors",paper:"rock",scissors:"paper"};let rpsHidden=null,rpsBusy=false;var leaderDraft=null;
+function rpsStart(to,from){return{id:Date.now(),stage:"taunt",to,from}}
+const leaderOf=u=>lobby?.leaders?.[u]||(lobby?.players?.[u]?`${NAT[lobby.players[u]].name}'s leader`:"Their leader");
+const natOfU=u=>lobby?.players?.[u]?NAT[lobby.players[u]].name:"";
+function rpsNews(L){const R=L.rps,w=R.winner,l=R.loser,wn=L.leaders?.[w]||`the leader of ${NAT[L.players[w]].name}`,ln=L.leaders?.[l];
+  return `🏆 ${NAT[L.players[l]].name}'s leader${ln?", "+ln+",":""} announced a statue in honor of ${wn} of ${NAT[L.players[w]].name}, world rock paper scissors champion.`}
+async function rpsAct(kind,v){const R=lobby?.rps;if(!R||rpsBusy)return;rpsBusy=true;const up={};
+  if(kind==="ignore"&&R.stage==="taunt"&&R.to===me)up["rps.stage"]="ignored";
+  else if(kind==="challenge"&&R.stage==="taunt"&&R.to===me)up["rps.stage"]="challenge";
+  else if(kind==="accept"&&R.stage==="challenge"&&R.from===me){up["rps.stage"]="match";up["rps.score"]={[R.to]:0,[R.from]:0};up["rps.picks"]={};up["rps.history"]=[]}
+  else if(kind==="decline"&&R.stage==="challenge"&&R.from===me)up["rps.stage"]="declined";
+  else if(kind==="pick"&&R.stage==="match"&&RPS.includes(v)&&[R.to,R.from].includes(me)&&!R.picks?.[me])up["rps.picks."+me]=v;
+  try{if(Object.keys(up).length)await gref().update(up)}catch{toast("Couldn't send. Try again.")}rpsBusy=false}
+let rpsResolving=false;
+async function hostRps(){const R=lobby?.rps;if(mode!=="mp"||!lobby||lobby.host!==me||!R||R.stage!=="match"||rpsResolving)return;const a=R.to,b=R.from,pa=R.picks?.[a],pb=R.picks?.[b];if(!pa||!pb)return;rpsResolving=true;
+  const win=pa===pb?null:RPS_BEATS[pa]===pb?a:b,score={...R.score};if(win)score[win]=(score[win]||0)+1;const history=[...(R.history||[]),{[a]:pa,[b]:pb,win}];
+  const up={"rps.score":score,"rps.history":history,"rps.picks":{}};if(win&&score[win]>=2){up["rps.stage"]="done";up["rps.winner"]=win;up["rps.loser"]=win===a?b:a}
+  try{await gref().update(up)}catch{}rpsResolving=false}
+function rpsCard(){const R=mode==="mp"?lobby?.rps:null;if(!R||![R.to,R.from].includes(me))return "";if(rpsHidden===R.stage+"|"+R.id)return "";const other=me===R.to?R.from:R.to,ON=natOfU(other),oL=leaderOf(other);
+  const hide=`<button class="btn small" data-act="rpsHide">Close</button>`;let h="";
+  if(R.stage==="taunt")h=me===R.to?`<p><b>${esc(ON)}'s leader, ${esc(oL)}, claims you are a world-class loser at rock paper scissors.</b></p><div class="row wrap"><button class="btn small" data-act="rpsAct" data-id="ignore">Ignore their shenanigans</button><button class="btn small primary" data-act="rpsAct" data-id="challenge">Challenge to defend your honor</button></div>`
+    :`<p>Your leader has claimed that ${esc(oL)} of ${esc(ON)} is a world-class loser at rock paper scissors. The taunt was sent. Waiting for their reply.</p>`;
+  else if(R.stage==="ignored")h=`<p>${me===R.to?"You ignored the shenanigans.":`${esc(oL)} ignored your taunt.`}</p>${hide}`;
+  else if(R.stage==="challenge")h=me===R.from?`<p><b>${esc(oL)} of ${esc(ON)} challenges you to rock paper scissors to defend their honor. Accept?</b></p><div class="row wrap"><button class="btn small primary" data-act="rpsAct" data-id="accept">Accept</button><button class="btn small" data-act="rpsAct" data-id="decline">Decline</button></div>`
+    :`<p>You challenged ${esc(oL)}. Waiting for them to accept.</p>`;
+  else if(R.stage==="declined")h=`<p>${me===R.from?"You declined the challenge.":`${esc(oL)} declined your challenge.`}</p>${hide}`;
+  else if(R.stage==="match"||R.stage==="done"){const s=R.score||{},mine=s[me]||0,theirs=s[other]||0,hist=R.history||[],last=hist[hist.length-1],picked=R.picks?.[me];
+    h=`<p><b>Rock paper scissors: you ${mine}, ${esc(oL)} ${theirs}.</b> First to 2 wins. Ties count for nobody.</p>`+(hist.length?`<p class="note">${hist.map((x,i)=>`Round ${i+1}: you ${RPS_ICON[x[me]]} ${x[me]}, them ${RPS_ICON[x[other]]} ${x[other]}. ${x.win===me?"You won it.":x.win?"They won it.":"Tie."}`).join("<br>")}</p>`:"");
+    if(R.stage==="match")h+=picked?`<p class="note">You picked ${RPS_ICON[picked]} ${picked}. Waiting for ${esc(oL)}…</p>`:`<div class="row wrap">${RPS.map(x=>`<button class="btn small" data-act="rpsAct" data-id="pick" data-v="${x}">${RPS_ICON[x]} ${x[0].toUpperCase()+x.slice(1)}</button>`).join("")}</div>`;
+    else h+=`<p><b>${R.winner===me?"You are the world rock paper scissors champion.":`${esc(oL)} wins. Your nation will announce a statue in their honor.`}</b></p>${hide}`}
+  return `<div class="offer rps" style="--nc:${lobby.players[other]?NAT[lobby.players[other]].color:"var(--act)"}">${h}</div>`}
 
 /* ---------- input ---------- */
-app.addEventListener("input",e=>{const el=e.target;
+app.addEventListener("input",e=>{const el=e.target;if(el.id==="leaderIn")leaderDraft=el.value;
   if(el.id==="amt"){amount=+el.value;const v=$("#amtv");if(v)v.textContent=el.value;const od=$("#odds");if(od){$("#oddsn").textContent=el.value;$("#oddsv").textContent=Math.round(winChance(+el.value,+od.dataset.def,od.dataset.bonus==="1")*100)+"%"}}
   if(el.dataset.act==="pol"){const t=$("#taxv");if(el.id==="tax"&&t)t.textContent=el.value+"%";
     {const bd={};for(const k of ["troops","def","infra","prop"])bd[k]=+$("#b-"+k).value;polDraft={turn:S.turn,tax:+$("#tax").value,budget:bd}}
@@ -1453,18 +1563,22 @@ app.addEventListener("click",e=>{const el=e.target.closest("[data-act]");if(!el|
     case"diff":setup.diff=id;render();break;
     case"robots":setup.robots=+id;render();break;
     case"opt":setup.opts={...(setup.opts||{}),[id]:!setup.opts?.[id]};render();break;
+    case"gtype":setup.opts={...(setup.opts||{}),lightning:id==="lightning"};if(id==="lightning"){setup.opts.politics=false;setup.opts.nukes=false}render();break;
     case"startSolo":lsSet("sov-draft",null);startSolo();break;
     case"createLobby":createLobby();break;
     case"guestNat":gref().update({["players."+me]:setup.nat}).catch(()=>toast("Couldn't save your choice"));break;
     case"leaveLobby":if(unsub){unsub();unsub=null}lsSet("sov-code",null);if(lobby&&lobby.host!==me)gref().update({["players."+me]:deleteField()}).catch(()=>{});mode=null;lobby=null;screen="home";render();break;
     case"invite":{const url=location.origin+location.pathname+"?g="+code;if(navigator.share)navigator.share({title:"Sovereign",text:"Join my game: "+code,url}).catch(()=>{});else navigator.clipboard?.writeText(url).then(()=>toast("Invite link copied"),()=>toast(url));break}
     case"startMp":startMp();break;
+    case"leaderName":{const v=($("#leaderIn")?.value||"").trim().slice(0,20);if(!v){toast("Type a name first");break}if(!isClean(v.replace(/[^A-Za-z]/g,"|"))){toast("Pick a different name");break}gref().update({["leaders."+me]:v}).then(()=>toast("Leader name saved")).catch(()=>toast("Couldn't save the name"));break}
+    case"rpsAct":rpsAct(id,el.dataset.v);break;
+    case"rpsHide":rpsHidden=lobby?.rps?.stage+"|"+lobby?.rps?.id;render();break;
     case"claim":claim(id);break;
     case"tab":tab=id;render();break;
     case"region":if(sel!==id){sel=id;target=null;amount=1}else if(S.regions[id].owner!==myNat){sel=id}render();break;
     case"target":target=target===id?null:id;amount=Math.max(1,S.regions[sel].troops-(S.regions[sel].def>0?0:1)-committed(sel));render();break;
     case"addMove":{const free=freeAt(sel),k=Math.min(amount,free);if(k<1)return;const o=S.regions[target].owner,host=o&&o!==myNat&&basing(S,o,myNat),atk=o!==myNat&&!host;
-      const ord={t:atk?"attack":"move",from:sel,to:target,n:k};
+      const ord={t:atk?"attack":"move",from:sel,to:target,n:k};if(atk&&$("#blitz")?.value)ord.to2=$("#blitz").value;
       if(atk&&o&&rel(S,myNat,o)?.level>-2&&!hasGrievance(S,myNat,o)&&!myOrders.some(x=>x.t==="attack"&&S.regions[x.to].owner===o)){if(actionCount()>=ACTION_CAP){toast(`You can give ${ACTION_CAP} troop or spy orders per turn`);break}confirmAtk=ord;render();break}
       addOrder(ord);target=null;render();break}
     case"airlift":addOrder({t:"airlift",from:sel,to:$("#dropTo").value,n:+$("#dropN").value});break;
@@ -1482,6 +1596,9 @@ app.addEventListener("click",e=>{const el=e.target.closest("[data-act]");if(!el|
     case"missile":{const k=+$("#mslN").value,ex=myOrders.findIndex(o=>o.t==="missile"&&o.region===sel);if(ex>=0&&myOrders[ex].n===k){myOrders.splice(ex,1);saveDraft();render();break}addOrder({t:"missile",region:sel,n:k});break}
     case"sacrifice":{const t=$("#sacT")?.value,ex=myOrders.find(o=>o.t==="sacrifice");if(ex&&ex.after===id&&ex.target===t){myOrders=myOrders.filter(o=>o.t!=="sacrifice");saveDraft();render();break}if(t)addOrder({t:"sacrifice",target:t,after:id});break}
     case"nextTurn":endTurnSolo();break;
+    case"milFund":addOrder({t:"milFund",b:id,on:el.dataset.v==="1"});break;
+    case"milBuy":{const k=+$("#mb_"+id).value,ex=myOrders.find(o=>o.t==="milBuy"&&o.kind===id);if(ex&&ex.n===k){myOrders=myOrders.filter(o=>o!==ex);saveDraft();render();break}if(ex)myOrders=myOrders.filter(o=>o!==ex);if(S.nations[myNat].cash-spendQueued()<k*MIL_PRICE[id]){toast("Not enough in the treasury");render();break}addOrder({t:"milBuy",kind:id,n:k});break}
+    case"airStrike":{const k=+$("#asN").value,ex=myOrders.find(o=>o.t==="airStrike"&&o.region===sel);if(ex&&ex.n===k){myOrders=myOrders.filter(o=>o!==ex);saveDraft();render();break}addOrder({t:"airStrike",region:sel,n:k});break}
     case"polNone":{const ex=myOrders.findIndex(o=>o.t==="pol"&&o.kind==="none");if(ex>=0){myOrders.splice(ex,1);saveDraft();render()}else addOrder({t:"pol",kind:"none"});break}
     case"polact":{myOrders=myOrders.filter(o=>!(o.t==="pol"&&o.kind==="none"));const k=el.dataset.k,o={t:"pol",kind:k};if(k==="campaign")o.region=$("#campR")?.value;if(k==="rally")o.faction=$("#rallyF")?.value;addOrder(o);break}
     case"confirmAtk":{const o=confirmAtk;confirmAtk=null;target=null;addOrder(o);break}
